@@ -31,7 +31,7 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | **wrong** | MIC-20 |
 | H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | **wrong** | **wrong** | MIC-42, MIC-16, MIC-20, MIC-44 |
 | H6 | COP0 read delay (mfc0) | **wrong** (inline asm) | **wrong** | MIC-16, MIC-18 |
-| H7 | COP0 write latency (SR, COP2 enable) | open | **wrong** | MIC-18 |
+| H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | **wrong** | MIC-18 |
 | H8 | `rfe` | n/a | **wrong** (missing) | MIC-18 |
 | H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
 | H10 | Interrupt during a load delay | correct | correct | none |
@@ -178,11 +178,22 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   exception is the cop2 enable bit in cop0r12.bit30 (setting that cop0 bit
   acts delayed, and cop2 isn't actually enabled until after 2 clock cycles or
   so)" ([psx-spx][spx-cpu]).
-* **gas.** Pads `mtc0` before a COP2 instruction with one `nop`.
+* **gas.** Pads `mtc0` before a COP2 instruction with one `nop`. That is gas's
+  generic R3000 coprocessor-write rule, not PS1-specific.
+* **OpenBIOS.** Enables COP2 at boot with `mtc0 $t0, $12; nop`. One `nop` is
+  enough there because the BIOS runs from uncached ROM, and "store delays are
+  counted in numbers of clock cycles (not in numbers of opcodes). For 3 cycle
+  delay, one must usually insert 3 cached opcodes (or one uncached opcode)"
+  ([psx-spx, Store Delay][spx-cpu]).
+* **Games.** No known code relies on the delay. The only effect of issuing a
+  COP2 instruction too early is that it runs while COP2 is still disabled.
+  The retail BIOS shell and OpenBIOS both leave COP2 enabled before user code
+  runs.
 * **LLVM IAS: wrong.** Pads nothing.
-* **Open for MIC-18.** Whether to pad two cycles after any `mtc0 $x, $12`
-  (hardware) or one (gas). This catalogue recommends two, following the
-  hardware-faithful rule.
+* **Decision (MIC-18): pad two instructions** between `mtc0 $x, $12` and the
+  next COP2 instruction in reorder mode. Compiled code runs from cached RAM,
+  where two cycles means two instructions. PCSX-Redux does not emulate this
+  delay, so MIC-40 (real hardware) confirms the count.
 * Tests: [cop0-hazards.s](../../llvm/test/MC/Mips/ps1/cop0-hazards.s) (XFAIL,
   MIC-18).
 
