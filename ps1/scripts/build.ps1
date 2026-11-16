@@ -24,7 +24,7 @@ if (-not (Test-Path (Join-Path $BuildDir 'build.ninja'))) {
 
 if (-not $Targets) {
     $Targets = 'clang', 'lld', 'llc', 'llvm-mc', 'llvm-objdump', 'FileCheck',
-               'llvm-readobj', 'llvm-objcopy', 'not', 'count'
+               'llvm-readobj', 'llvm-objcopy', 'not', 'count', 'llvm-config'
 }
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
