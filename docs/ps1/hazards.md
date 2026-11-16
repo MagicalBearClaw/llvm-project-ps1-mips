@@ -36,7 +36,7 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
 | H10 | Interrupt during a load delay | correct | correct | none |
 | H11 | Unaligned access | correct | correct | none |
-| H12 | Divide by zero | **wrong** (`teq`) | n/a | MIC-22 |
+| H12 | Divide by zero | correct (MIC-11) | n/a | MIC-22 |
 | H13 | Divide overflow, add overflow | correct | n/a | none (opt-in MIC-61) |
 | H14 | MMIO store width | correct | n/a | MIC-24 (upper bits) |
 
@@ -114,9 +114,11 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   gas pads `mflo; mult` and `mfhi; mthi` with two `nop`s.
 * **ASPSX.** Two `nop`s (`_handle_mflo_mfhi`, `nop_mflo_mfhi=True`).
 * **LLVM codegen: correct.** `MipsBranchExpansion::handleMFLO` keeps two
-  instructions before a mult/div. `SafeAfterMflo` only checks `IsDIVMULT`, so
-  `mthi`/`mtlo` are not covered. Codegen does not emit those today; MIC-20
-  covers it.
+  instructions before a mult/div. Upstream walked whole bundles and missed a
+  mult/div in a branch delay slot; the #201133 backport puts `div` there, so
+  MIC-11 made it look inside bundles (`mflo; nop; bnez; div`).
+  `SafeAfterMflo` only checks `IsDIVMULT`, so `mthi`/`mtlo` are not covered.
+  Codegen does not emit those today; MIC-20 covers it.
 * **LLVM IAS: wrong.** Emits `mflo; mult` as written in reorder mode.
 * Tests: [hilo-hazard.ll](../../llvm/test/CodeGen/Mips/ps1/hilo-hazard.ll),
   [hilo-reorder.s](../../llvm/test/MC/Mips/ps1/hilo-reorder.s) (XFAIL, MIC-20).
@@ -251,12 +253,13 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 * **GCC 16.** `bne $rt,$0,1f; div $0,$rs,$rt` (in the delay slot); `break 7;
   1: mflo`. `-mno-check-zero-division` removes the check.
 * **ASPSX.** `bnez $rt; nop; break 7` after the `div`.
-* **LLVM: wrong.** Emits `div $zero,$4,$5; teq $5,$zero,7` for `-mcpu=mips1`.
-  `llvm-mc` rejects `teq` on mips1, but codegen encodes it straight into
-  objects. Every C `/` or `%` compiled by clang for the PS1 today contains an
-  instruction the CPU cannot execute.
-* Tests: [div-zero-check.ll](../../llvm/test/CodeGen/Mips/ps1/div-zero-check.ll)
-  (XFAIL, MIC-22).
+* **LLVM: correct since MIC-11** (backport of llvm/llvm-project#201133). It
+  emits GCC's sequence. LLVM 22.1.8 emitted `div $zero,$4,$5; teq
+  $5,$zero,7`, which the CPU cannot execute; `llvm-mc` rejects `teq` on mips1,
+  but codegen encoded it straight into objects. The opt-in ASPSX `break 6`
+  overflow check is MIC-22.
+* Tests: [div-zero-check.ll](../../llvm/test/CodeGen/Mips/ps1/div-zero-check.ll),
+  [div-no-trap-mips1.ll](../../llvm/test/CodeGen/Mips/ps1/div-no-trap-mips1.ll).
 
 ## H13. Divide overflow and add overflow
 

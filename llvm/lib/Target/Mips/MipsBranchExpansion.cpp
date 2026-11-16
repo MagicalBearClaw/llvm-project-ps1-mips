@@ -88,6 +88,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
@@ -732,49 +733,54 @@ static void emitGPDisp(MachineFunction &F, const MipsInstrInfo *TII) {
   MBB.removeLiveIn(Mips::V0);
 }
 
+// Collect up to \p N real instructions executed after \p I on the fall-through
+// path. Bundles are looked into, so an instruction in a branch delay slot is
+// seen in execution order right after its branch.
+static SmallVector<MachineInstr *, 2>
+getNextExecutedInstrs(Iter I, MachineBasicBlock *Parent, unsigned N) {
+  SmallVector<MachineInstr *, 2> Next;
+  std::pair<Iter, bool> Res = getNextMachineInstr(std::next(I), Parent);
+  while (!Res.second && Next.size() < N) {
+    MachineBasicBlock::instr_iterator BI = Res.first.getInstrIterator();
+    MachineBasicBlock::instr_iterator BE = getBundleEnd(BI);
+    for (; BI != BE && Next.size() < N; ++BI)
+      if (!BI->isTransient())
+        Next.push_back(&*BI);
+    Res = getNextMachineInstr(std::next(Res.first), Res.first->getParent());
+  }
+  return Next;
+}
+
 template <typename Pred, typename Safe>
 bool MipsBranchExpansion::handleMFLOSlot(Pred Predicate, Safe SafeInSlot) {
   bool Changed = false;
-  bool hasPendingMFLO = false;
 
   for (MachineFunction::iterator FI = MFp->begin(); FI != MFp->end(); ++FI) {
     for (Iter I = FI->begin(); I != FI->end(); ++I) {
-
-      if (!Predicate(*I) && !hasPendingMFLO) {
+      if (!Predicate(*I))
         continue;
+
+      // The two instructions after mflo/mfhi must not write HI/LO. Pad just
+      // before the HI/LO writer, where the nop can also cover a load delay,
+      // unless the writer is in a delay slot: then pad right after mflo/mfhi.
+      SmallVector<MachineInstr *, 2> Next = getNextExecutedInstrs(I, &*FI, 2);
+      unsigned Nops = 0;
+      Iter InsertAfter = I;
+      if (Next.size() > 0 && !SafeInSlot(*Next[0], *I)) {
+        Nops = 2;
+      } else if (Next.size() > 1 && !SafeInSlot(*Next[1], *I)) {
+        Nops = 1;
+        if (!Next[1]->isBundledWithPred())
+          InsertAfter = Iter(Next[0]);
       }
 
-      Iter IInSlot;
-      bool LastInstInFunction =
-          std::next(I) == FI->end() && std::next(FI) == MFp->end();
-      // We need process several situations:
-      // mflo is last instruction, do not process;
-      // mflo + div, add two nop between them;
-      // mflo + none-div + none-div, do not process;
-      // mflo + none-div + div, add nop between none-div and div.
-      if (!LastInstInFunction) {
-        std::pair<Iter, bool> Res = getNextMachineInstr(std::next(I), &*FI);
-        LastInstInFunction |= Res.second;
-        IInSlot = Res.first;
-        if (LastInstInFunction)
-          continue;
-        if (!SafeInSlot(*IInSlot, *I)) {
-          Changed = true;
-          TII->insertNop(*(I->getParent()), std::next(I), I->getDebugLoc())
-              ->bundleWithPred();
-          NumInsertedNops++;
-          if (IsMFLOMFHI(I->getOpcode())) {
-            TII->insertNop(*(I->getParent()), std::next(I), I->getDebugLoc())
-                ->bundleWithPred();
-            NumInsertedNops++;
-          }
-          if (hasPendingMFLO)
-            hasPendingMFLO = false;
-        } else if (hasPendingMFLO)
-          hasPendingMFLO = false;
-        else if (IsMFLOMFHI(I->getOpcode()))
-          hasPendingMFLO = true;
+      for (unsigned K = 0; K < Nops; ++K) {
+        TII->insertNop(*InsertAfter->getParent(), std::next(InsertAfter),
+                       I->getDebugLoc())
+            ->bundleWithPred();
+        ++NumInsertedNops;
       }
+      Changed |= Nops != 0;
     }
   }
 
