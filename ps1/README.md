@@ -36,6 +36,8 @@ ps1\scripts\new-worktree.ps1 MIC-14 r3000a-processor
 cd G:\git\llvm-ps1-worktrees\MIC-14
 ps1\scripts\build.ps1
 ps1\scripts\build.ps1 check-llvm-codegen-mips check-llvm-mc-mips
+# or run lit directly on a few tests (needs the default tool set):
+python build\bin\llvm-lit.py -v llvm\test\CodeGen\Mips\ps1 llvm\test\MC\Mips\ps1
 ```
 
 ## Build configuration
