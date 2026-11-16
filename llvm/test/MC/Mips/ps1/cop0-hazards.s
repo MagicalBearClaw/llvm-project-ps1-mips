@@ -3,7 +3,10 @@
 # * RFE (cop0 command 0x10) pops the SR interrupt/mode stack and is normally
 #   placed in the delay slot of `jr $k0` (psx-spx "COP0 - Exception Handling").
 # * mtc0 to SR is free of store delays, except that enabling COP2 (SR bit 30)
-#   takes about two cycles. gas pads one nop before a COP2 instruction.
+#   takes about two cycles. Store delays count cycles, not opcodes (psx-spx
+#   "Caution - Store Delay"), and code runs from cached RAM, so that is two
+#   instructions. gas pads only one; OpenBIOS gets away with one because it
+#   runs from uncached ROM. Hardware-faithful output pads two (MIC-18).
 # See docs/ps1/hazards.md, H6, H7 and H8.
 #
 # Status: WRONG in LLVM 22.1.8: `rfe` is not accepted, and no nop is inserted
@@ -19,6 +22,7 @@
         mfc0    $2, $12
         addiu   $2, $2, 1
 # CHECK-NEXT: 40826000 mtc0 $2, $12
+# CHECK-NEXT: 00000000 nop
 # CHECK-NEXT: 00000000 nop
 # CHECK-NEXT: 4a180001
         mtc0    $2, $12
