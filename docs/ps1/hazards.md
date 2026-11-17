@@ -39,6 +39,8 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H12 | Divide by zero | correct (MIC-11) | n/a | MIC-22 |
 | H13 | Divide overflow, add overflow | correct | n/a | none (opt-in MIC-61) |
 | H14 | MMIO store width | correct | n/a | MIC-24 (upper bits) |
+| H15 | DMA buffer ordering (plain stores before the MMIO start) | correct (with a barrier) | n/a | none (MIC-12 tests) |
+| H16 | Instruction cache after loading code | n/a (runtime) | n/a | MIC-30 (`__clear_cache`) |
 
 ## H1. GPR load delay
 
@@ -281,6 +283,49 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 * **LLVM: correct** for width: a volatile i16 store is one `sh`. MIC-24 checks
   whether the upper GPR bits on narrow stores match GCC.
 * Tests: [mmio-store-width.ll](../../llvm/test/CodeGen/Mips/ps1/mmio-store-width.ll).
+
+## H15. DMA buffer ordering
+
+* **Hardware.** There is no data cache (the 1 KiB scratchpad is separate RAM),
+  and CPU writes leave through a FIFO write queue. Packet data stored to RAM
+  therefore reaches memory before a later store to a DMA channel's CHCR starts
+  the transfer, and no barrier instruction is needed. MIPS I has none anyway
+  (`sync` is MIPS II).
+* **Compiler.** `volatile` only orders volatile accesses against each other.
+  The buffer stores are plain stores, so the compiler may move them after the
+  volatile CHCR store or delete them: at `-O2`, a packet store followed by a
+  DMA start and a reuse of the buffer is removed as dead. Code that starts DMA
+  needs a compiler barrier between building the buffer and the MMIO store:
+  `atomic_thread_fence(memory_order_release)`, `atomic_signal_fence(...)` or
+  `asm volatile("" ::: "memory")`. On the read side, an acquire fence after
+  polling for completion makes the buffer be read again.
+* **LLVM: correct, given a barrier.** Since the #190129 backport (MIC-12), a
+  fence on mips1 is a compiler barrier that emits no instruction. Before it,
+  llc crashed on any fence for mips1.
+* **Not covered by a fence.** Waiting for the device: poll the CHCR busy bit
+  (bit 24) before reusing a buffer, and GPUSTAT's ready bits before sending
+  more GPU commands. When a write to an MMIO register takes effect: because of
+  the write queue, a store such as an I_STAT acknowledge can land after later
+  instructions have run. Whether a following load waits for the queue to drain
+  is not verified; MIC-40 checks it on hardware.
+* Tests: [dma-barrier-opt.ll](../../llvm/test/CodeGen/Mips/ps1/dma-barrier-opt.ll),
+  [fence-mips1.ll](../../llvm/test/CodeGen/Mips/ps1/fence-mips1.ll).
+
+## H16. Instruction cache after loading code
+
+* **Hardware.** The R3000A has a 4 KiB instruction cache that is not kept
+  coherent with memory. Code written to RAM by DMA (a CD-ROM read of an
+  overlay) or by CPU stores (a decompressor, self-modifying code) can be
+  shadowed by stale cache lines until the cache is flushed. The BIOS provides
+  `FlushCache`, A(44h). Data accesses are uncached anyway, so uncached KSEG1
+  addresses do not matter for data, only for running code without the cache.
+* **Compiler.** Nothing in codegen. `__builtin___clear_cache(begin, end)`
+  lowers to a call to `__clear_cache`, as with GCC.
+* **compiler-rt: wrong for the PS1.** The generic MIPS `__clear_cache` starts
+  with `rdhwr` (MIPS32r2), which raises a Reserved Instruction exception on the
+  R3000A. The psx builtins (MIC-30) need a `__clear_cache` that calls BIOS
+  `FlushCache`, and overlay loaders must call it after loading code.
+* Tests: none yet; MIC-30 adds one with its runtime tests.
 
 ## Other differences found during the audit
 
