@@ -86,6 +86,7 @@ void mips::getMipsCPUAndABI(const ArgList &Args, const llvm::Triple &Triple,
        Triple.getVendor() == llvm::Triple::ImaginationTechnologies)) {
     ABIName = llvm::StringSwitch<const char *>(CPUName)
                   .Case("mips1", "o32")
+                  .Case("r3000a", "o32")
                   .Case("mips2", "o32")
                   .Case("mips3", "n64")
                   .Case("mips4", "n64")
@@ -167,8 +168,13 @@ mips::FloatABI mips::getMipsFloatABI(const Driver &D, const ArgList &Args,
 
   // If unspecified, choose the default based on the platform.
   if (ABI == mips::FloatABI::Invalid) {
+    StringRef CPUName, ABIName;
+    getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
     if (Triple.isOSFreeBSD()) {
       // For FreeBSD, assume "soft" on all flavors of MIPS.
+      ABI = mips::FloatABI::Soft;
+    } else if (CPUName == "r3000a") {
+      // The R3000A (PlayStation CPU) has no FPU.
       ABI = mips::FloatABI::Soft;
     } else {
       // Assume "hard", because it's a default value used by gcc.
@@ -419,6 +425,7 @@ mips::IEEE754Standard mips::getIEEE754Standard(StringRef &CPU) {
   // for Release 2 so we should do the same.
   return (IEEE754Standard)llvm::StringSwitch<int>(CPU)
       .Case("mips1", Legacy)
+      .Case("r3000a", Legacy)
       .Case("mips2", Legacy)
       .Case("mips3", Legacy)
       .Case("mips4", Legacy)

@@ -1468,9 +1468,9 @@ MipsTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case Mips::DIVU:
   case Mips::MOD:
   case Mips::MODU: {
-    const DivByZeroTrapKind TrapKind = !Subtarget.hasMips2()
-                                           ? DivByZeroTrapKind::Break
-                                           : DivByZeroTrapKind::Teq;
+    const DivByZeroTrapKind TrapKind = Subtarget.hasTraps()
+                                           ? DivByZeroTrapKind::Teq
+                                           : DivByZeroTrapKind::Break;
     return insertDivByZeroTrap(MI, *BB, *Subtarget.getInstrInfo(), false,
                                TrapKind);
   }

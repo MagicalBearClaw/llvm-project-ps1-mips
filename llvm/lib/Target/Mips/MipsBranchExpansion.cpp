@@ -826,7 +826,7 @@ bool MipsBranchExpansion::handleSlot(Pred Predicate, Safe SafeInSlot) {
 bool MipsBranchExpansion::handleMFLO() {
   // mips1-4 require a minimum of 2 instructions between a mflo/mfhi
   // and the next mul/div instruction.
-  if (STI->hasMips32() || STI->hasMips5())
+  if (!STI->hasHILOHazard())
     return false;
 
   return handleMFLOSlot(
@@ -861,7 +861,7 @@ bool MipsBranchExpansion::handleFPUDelaySlot() {
 
 bool MipsBranchExpansion::handleLoadDelaySlot() {
   // Load delay slot hazards are only for MIPS1.
-  if (STI->hasMips2())
+  if (!STI->hasLoadDelaySlots())
     return false;
 
   return handleSlot(

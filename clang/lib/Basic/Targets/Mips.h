@@ -69,10 +69,13 @@ public:
            CPU == "i6500";
   }
 
+  /// A MIPS I CPU: mips1, or the R3000A (PlayStation CPU).
+  bool isMips1CPU() const { return CPU == "mips1" || CPU == "r3000a"; }
+
   enum FPModeEnum getDefaultFPMode() const {
     if (CPU == "mips32r6" || ABI == "n32" || ABI == "n64" || ABI == "64")
       return FP64;
-    else if (CPU == "mips1")
+    else if (isMips1CPU())
       return FP32;
     else
       return FPXX;
