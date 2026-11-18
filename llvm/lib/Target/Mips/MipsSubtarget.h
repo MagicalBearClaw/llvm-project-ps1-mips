@@ -124,6 +124,15 @@ class MipsSubtarget : public MipsGenSubtargetInfo {
   // CPU supports cnMIPSP (Cavium Networks Octeon+ CPU).
   bool HasCnMipsP;
 
+  // IsR3000A - CPU is the R3000A (PlayStation CPU).
+  bool IsR3000A;
+
+  // NoTraps - the CPU cannot execute conditional trap instructions.
+  bool NoTraps;
+
+  // HasGTE - CPU has the PlayStation GTE as coprocessor 2.
+  bool HasGTE;
+
   // isLinux - Target system is Linux. Is false we consider ELFOS for now.
   bool IsLinux;
 
@@ -297,6 +306,20 @@ public:
 
   bool hasCnMips() const { return HasCnMips; }
   bool hasCnMipsP() const { return HasCnMipsP; }
+  bool isR3000A() const { return IsR3000A; }
+  bool hasGTE() const { return HasGTE; }
+
+  /// Conditional trap instructions (teq, tge, ...) exist (MIPS II and later)
+  /// and the CPU can execute them.
+  bool hasTraps() const { return hasMips2() && !NoTraps; }
+
+  /// MIPS I: a loaded register is not available to the next instruction, and
+  /// the CPU does not interlock.
+  bool hasLoadDelaySlots() const { return hasMips1() && !hasMips2(); }
+
+  /// MIPS I-IV: an instruction that writes HI/LO within two instructions of
+  /// an mfhi/mflo corrupts the value read.
+  bool hasHILOHazard() const { return !hasMips32() && !hasMips5(); }
 
   bool isLittle() const { return IsLittle; }
   bool isABICalls() const { return !NoABICalls; }

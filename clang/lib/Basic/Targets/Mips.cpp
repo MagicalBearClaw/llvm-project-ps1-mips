@@ -55,7 +55,8 @@ static constexpr llvm::StringLiteral ValidCPUNames[] = {
     {"mips1"},  {"mips2"},    {"mips3"},    {"mips4"},    {"mips5"},
     {"mips32"}, {"mips32r2"}, {"mips32r3"}, {"mips32r5"}, {"mips32r6"},
     {"mips64"}, {"mips64r2"}, {"mips64r3"}, {"mips64r5"}, {"mips64r6"},
-    {"octeon"}, {"octeon+"},  {"p5600"},    {"i6400"},    {"i6500"}};
+    {"octeon"}, {"octeon+"},  {"p5600"},    {"r3000a"},   {"i6400"},
+    {"i6500"}};
 
 bool MipsTargetInfo::isValidCPUName(StringRef Name) const {
   return llvm::is_contained(ValidCPUNames, Name);
@@ -207,7 +208,7 @@ void MipsTargetInfo::getTargetDefines(const LangOptions &Opts,
   if (StringRef(CPU).starts_with("octeon"))
     Builder.defineMacro("__OCTEON__");
 
-  if (CPU != "mips1") {
+  if (!isMips1CPU()) {
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2");
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4");
@@ -277,14 +278,19 @@ bool MipsTargetInfo::validateTarget(DiagnosticsEngine &Diags) const {
     return false;
   }
   // Option -mfp64 permitted on Mips32 iff revision 2 or higher is present
-  if (FPMode == FP64 && (CPU == "mips1" || CPU == "mips2" ||
+  if (FPMode == FP64 && (isMips1CPU() || CPU == "mips2" ||
       getISARev() < 2) && ABI == "o32") {
     Diags.Report(diag::err_mips_fp64_req) << "-mfp64";
     return false;
   }
   // FPXX requires mips2+
-  if (FPMode == FPXX && CPU == "mips1") {
+  if (FPMode == FPXX && isMips1CPU()) {
     Diags.Report(diag::err_opt_not_valid_with_opt) << "-mfpxx" << CPU;
+    return false;
+  }
+  // The R3000A has no FPU.
+  if (CPU == "r3000a" && FloatABI == HardFloat) {
+    Diags.Report(diag::err_opt_not_valid_with_opt) << "-mhard-float" << CPU;
     return false;
   }
   // -mmsa with -msoft-float makes nonsense
@@ -294,7 +300,7 @@ bool MipsTargetInfo::validateTarget(DiagnosticsEngine &Diags) const {
     return false;
   }
   // Option -mmsa permitted on Mips32 iff revision 2 or higher is present
-  if (HasMSA && (CPU == "mips1" || CPU == "mips2" || getISARev() < 2) &&
+  if (HasMSA && (isMips1CPU() || CPU == "mips2" || getISARev() < 2) &&
       ABI == "o32") {
     Diags.Report(diag::err_mips_fp64_req) << "-mmsa";
     return false;

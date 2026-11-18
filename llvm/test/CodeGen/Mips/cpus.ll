@@ -58,6 +58,11 @@
 ; OCTEONP: ISA: MIPS64r2
 ; OCTEONP: ISA Extension: Cavium Networks OcteonP
 
+; RUN: llc -mtriple=mipsel -mcpu=r3000a -filetype=obj < %s \
+; RUN:   | llvm-readelf -A - | FileCheck %s --check-prefix=R3000A
+; R3000A: ISA: MIPS1
+; R3000A: FP ABI: Soft float
+
 ; Check that we reject CPUs that are not implemented.
 
 ; RUN: not llc < %s -o /dev/null -mtriple=mips64 -mcpu=mips5 2>&1 \

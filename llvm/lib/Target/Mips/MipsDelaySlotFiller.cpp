@@ -1029,7 +1029,7 @@ bool MipsDelaySlotFiller::delayHasHazard(const MipsSubtarget &STI,
   HasHazard |= RegDU.update(Candidate, 0, Candidate.getNumOperands());
 
   // This only matters for MIPS1 and only if we do not have a hazard already
-  if (STI.hasMips1() && !STI.hasMips2() && !HasHazard) {
+  if (STI.hasLoadDelaySlots() && !HasHazard) {
     const MipsInstrInfo *TII = STI.getInstrInfo();
     const bool HasLoadDelaySlot = TII->HasLoadDelaySlot(Candidate);
 

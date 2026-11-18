@@ -7531,6 +7531,7 @@ bool MipsAsmParser::parseSetArchDirective() {
           .Case("octeon", "cnmips")
           .Case("octeon+", "cnmipsp")
           .Case("r4000", "mips3") // This is an implementation of Mips3.
+          .Case("r3000a", "r3000a")
           .Default("");
 
   if (ArchFeatureName.empty())

@@ -186,6 +186,20 @@ def FeatureCnMipsP : SubtargetFeature<"cnmipsp", "HasCnMipsP",
                                       "true", "Octeon+ cnMIPS Support",
                                       [FeatureCnMips]>;
 
+def FeatureNoTraps : SubtargetFeature<"notraps", "NoTraps", "true",
+                                      "Disable trap instructions">;
+
+def FeatureGTE : SubtargetFeature<"gte", "HasGTE", "true",
+                                  "PlayStation GTE (COP2) geometry coprocessor">;
+
+// The PlayStation CPU: a MIPS I R3000A with no FPU, no working conditional
+// traps, and the GTE as coprocessor 2. MIPS I hazards (load delay, HI/LO)
+// come from the ISA level, not from this feature; see MipsSubtarget.
+def FeatureR3000A : SubtargetFeature<"r3000a", "IsR3000A", "true",
+                                     "R3000A (PlayStation CPU) Support",
+                                     [FeatureMips1, FeatureSoftFloat,
+                                      FeatureNoTraps, FeatureGTE]>;
+
 def FeatureUseTCCInDIV : SubtargetFeature<
                                "use-tcc-in-div",
                                "UseTCCInDIV", "false",
@@ -296,6 +310,7 @@ def : Proc<"mips64r6", [FeatureMips64r6]>;
 def : Proc<"octeon", [FeatureMips64r2, FeatureCnMips]>;
 def : Proc<"octeon+", [FeatureMips64r2, FeatureCnMips, FeatureCnMipsP]>;
 def : ProcessorModel<"p5600", MipsP5600Model, [ImplP5600]>;
+def : Proc<"r3000a", [FeatureR3000A]>;
 def : ProcessorModel<"i6400", MipsI6400Model, [ImplI6400]>;
 def : ProcessorModel<"i6500", MipsI6400Model, [ImplI6500]>;
 
