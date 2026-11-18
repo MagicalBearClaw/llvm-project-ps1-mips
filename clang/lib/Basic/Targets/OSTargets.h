@@ -626,6 +626,19 @@ public:
 };
 
 // RTEMS Target
+// PlayStation 1: no OS, only the BIOS.
+template <typename Target>
+class LLVM_LIBRARY_VISIBILITY PSXTargetInfo : public OSTargetInfo<Target> {
+protected:
+  void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
+                    MacroBuilder &Builder) const override {
+    Builder.defineMacro("__psx__");
+  }
+
+public:
+  using OSTargetInfo<Target>::OSTargetInfo;
+};
+
 template <typename Target>
 class LLVM_LIBRARY_VISIBILITY RTEMSTargetInfo : public OSTargetInfo<Target> {
 protected:

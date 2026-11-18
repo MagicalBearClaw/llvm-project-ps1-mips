@@ -105,8 +105,9 @@ MipsSubtarget::MipsSubtarget(const Triple &TT, StringRef CPU, StringRef FS,
   if (MipsArchVersion == MipsDefault)
     MipsArchVersion = Mips32;
 
-  // MIPS-I has not been tested.
-  if (MipsArchVersion == Mips1 && !MIPS1WarningPrinted) {
+  // MIPS-I has not been tested, except as the R3000A (PlayStation CPU), which
+  // this fork tests.
+  if (MipsArchVersion == Mips1 && !IsR3000A && !MIPS1WarningPrinted) {
     errs() << "warning: MIPS-I support is experimental\n";
     MIPS1WarningPrinted = true;
   }

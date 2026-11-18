@@ -135,7 +135,9 @@ public:
 /// Select the Mips CPU for the given triple and cpu name.
 StringRef MIPS_MC::selectMipsCPU(const Triple &TT, StringRef CPU) {
   if (CPU.empty() || CPU == "generic") {
-    if (TT.getSubArch() == llvm::Triple::MipsSubArch_r6) {
+    if (TT.isOSPSX() && TT.isMIPS32()) {
+      CPU = "r3000a";
+    } else if (TT.getSubArch() == llvm::Triple::MipsSubArch_r6) {
       if (TT.isMIPS32())
         CPU = "mips32r6";
       else

@@ -283,6 +283,8 @@ StringRef Triple::getVendorTypeName(VendorType Kind) {
   case SUSE: return "suse";
   case Meta:
     return "meta";
+  case Sony:
+    return "sony";
   }
 
   llvm_unreachable("Invalid VendorType!");
@@ -341,6 +343,8 @@ StringRef Triple::getOSTypeName(OSType Kind) {
   case Vulkan: return "vulkan";
   case CheriotRTOS:
     return "cheriotrtos";
+  case PSX:
+    return "psx";
   }
 
   llvm_unreachable("Invalid OSType");
@@ -703,6 +707,7 @@ static Triple::VendorType parseVendor(StringRef VendorName) {
       .Case("oe", Triple::OpenEmbedded)
       .Case("intel", Triple::Intel)
       .Case("meta", Triple::Meta)
+      .Case("sony", Triple::Sony)
       .Default(Triple::UnknownVendor);
 }
 
@@ -754,6 +759,7 @@ static Triple::OSType parseOS(StringRef OSName) {
       .StartsWith("serenity", Triple::Serenity)
       .StartsWith("vulkan", Triple::Vulkan)
       .StartsWith("cheriotrtos", Triple::CheriotRTOS)
+      .StartsWith("psx", Triple::PSX)
       .Default(Triple::UnknownOS);
 }
 
