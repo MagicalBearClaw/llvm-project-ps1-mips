@@ -351,7 +351,7 @@ void BareMetal::findMultilibs(const Driver &D, const llvm::Triple &Triple,
 bool BareMetal::handlesTarget(const llvm::Triple &Triple) {
   return arm::isARMEABIBareMetal(Triple) ||
          aarch64::isAArch64BareMetal(Triple) || isRISCVBareMetal(Triple) ||
-         isPPCBareMetal(Triple);
+         isPPCBareMetal(Triple) || (Triple.isMIPS32() && Triple.isOSPSX());
 }
 
 Tool *BareMetal::buildLinker() const {
@@ -641,8 +641,11 @@ void baremetal::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Arch == llvm::Triple::aarch64_be ? "-EB" : "-EL");
   }
 
-  bool NeedCRTs =
-      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles);
+  // The PlayStation 1 has no standard crt0 or libc: programs bring their own
+  // (nugget's crt0 and linker scripts, or an SDK's).
+  const bool IsPSX = Triple.isOSPSX();
+  bool NeedCRTs = !IsPSX &&
+                  !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles);
 
   const char *CRTBegin, *CRTEnd;
   if (NeedCRTs) {
@@ -701,9 +704,10 @@ void baremetal::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     CmdArgs.push_back("--start-group");
     AddRunTimeLibs(TC, D, CmdArgs, Args);
-    if (!Args.hasArg(options::OPT_nolibc))
+    if (!IsPSX && !Args.hasArg(options::OPT_nolibc))
       CmdArgs.push_back("-lc");
-    if (TC.hasValidGCCInstallation() || detectGCCToolchainAdjacent(D))
+    if (!IsPSX &&
+        (TC.hasValidGCCInstallation() || detectGCCToolchainAdjacent(D)))
       CmdArgs.push_back("-lgloss");
     CmdArgs.push_back("--end-group");
   }

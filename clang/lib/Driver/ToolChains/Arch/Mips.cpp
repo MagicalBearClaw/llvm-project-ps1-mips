@@ -42,6 +42,10 @@ void mips::getMipsCPUAndABI(const ArgList &Args, const llvm::Triple &Triple,
   if (Triple.isOSOpenBSD())
     DefMips64CPU = "mips3";
 
+  // The R3000A is the PlayStation 1 CPU.
+  if (Triple.isOSPSX())
+    DefMips32CPU = "r3000a";
+
   // MIPS2 is the default for mips(el)?-unknown-freebsd.
   // MIPS3 is the default for mips64(el)?-unknown-freebsd.
   if (Triple.isOSFreeBSD()) {
@@ -247,8 +251,10 @@ void mips::getMIPSTargetFeatures(const Driver &D, const llvm::Triple &Triple,
 
   Arg *ABICallsArg =
       Args.getLastArg(options::OPT_mabicalls, options::OPT_mno_abicalls);
-  UseAbiCalls =
-      !ABICallsArg || ABICallsArg->getOption().matches(options::OPT_mabicalls);
+  // abicalls is the default, except on the PlayStation 1 (static only).
+  UseAbiCalls = ABICallsArg
+                    ? ABICallsArg->getOption().matches(options::OPT_mabicalls)
+                    : !Triple.isOSPSX();
 
   if (IsN64 && NonPIC && (!ABICallsArg || UseAbiCalls)) {
     D.Diag(diag::warn_drv_unsupported_pic_with_mabicalls)

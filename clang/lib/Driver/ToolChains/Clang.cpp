@@ -1820,6 +1820,10 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     CmdArgs.push_back("-mllvm");
     CmdArgs.push_back(Args.MakeArgString("-mips-ssection-threshold=" + v));
     A->claim();
+  } else if (Triple.isOSPSX()) {
+    // nugget builds with no small data; -G8 -mgpopt is opt-in.
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-mips-ssection-threshold=0");
   }
 
   Arg *GPOpt = Args.getLastArg(options::OPT_mgpopt, options::OPT_mno_gpopt);
@@ -1849,8 +1853,11 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
                (RelocationModel == llvm::Reloc::Static && ABIName == "n64");
 
   bool WantGPOpt = GPOpt && GPOpt->getOption().matches(options::OPT_mgpopt);
+  // The PlayStation 1 is static without abicalls, but gpopt is opt-in there.
+  NoABICalls = NoABICalls || Triple.isOSPSX();
+  bool GPOptByDefault = !Triple.isOSPSX();
   // We quietly ignore -mno-gpopt as the backend defaults to -mno-gpopt.
-  if (NoABICalls && (!GPOpt || WantGPOpt)) {
+  if (NoABICalls && ((!GPOpt && GPOptByDefault) || WantGPOpt)) {
     CmdArgs.push_back("-mllvm");
     CmdArgs.push_back("-mgpopt");
 
@@ -3782,8 +3789,10 @@ static void RenderBuiltinOptions(const ToolChain &TC, const llvm::Triple &T,
   if (!UseBuiltins)
     CmdArgs.push_back("-fno-builtin");
 
-  // -ffreestanding implies -fno-builtin.
-  if (Args.hasArg(options::OPT_ffreestanding))
+  // -ffreestanding implies -fno-builtin. The PlayStation 1 is freestanding by
+  // default.
+  if (Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted,
+                   T.isOSPSX()))
     UseBuiltins = false;
 
   // Process the -fno-builtin-* options.
@@ -5981,7 +5990,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // TODO: Audit uses of KernelOrKext and see where it'd be more appropriate to
   // use Freestanding.
   bool Freestanding =
-      Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
+      Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted,
+                   RawTriple.isOSPSX()) ||
       KernelOrKext;
   if (Freestanding)
     CmdArgs.push_back("-ffreestanding");

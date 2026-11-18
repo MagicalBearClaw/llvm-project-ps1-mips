@@ -92,7 +92,11 @@ void MipsTargetInfo::getTargetDefines(const LangOptions &Opts,
   if (Opts.GNUMode)
     Builder.defineMacro("mips");
 
-  if (ABI == "o32") {
+  if (ABI == "o32" && CPU == "r3000a") {
+    // As GCC does for -march=mips1 (an R3000).
+    Builder.defineMacro("__mips", "1");
+    Builder.defineMacro("_MIPS_ISA", "_MIPS_ISA_MIPS1");
+  } else if (ABI == "o32") {
     Builder.defineMacro("__mips", "32");
     Builder.defineMacro("_MIPS_ISA", "_MIPS_ISA_MIPS32");
   } else {
@@ -207,6 +211,17 @@ void MipsTargetInfo::getTargetDefines(const LangOptions &Opts,
 
   if (StringRef(CPU).starts_with("octeon"))
     Builder.defineMacro("__OCTEON__");
+
+  if (CPU == "r3000a") {
+    // The PlayStation CPU. The R3000 macros are the ones GCC defines for
+    // -march=mips1.
+    Builder.defineMacro("__R3000A__");
+    Builder.defineMacro("__R3000");
+    Builder.defineMacro("__R3000__");
+    Builder.defineMacro("_R3000");
+    if (Opts.GNUMode)
+      Builder.defineMacro("R3000");
+  }
 
   if (!isMips1CPU()) {
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");

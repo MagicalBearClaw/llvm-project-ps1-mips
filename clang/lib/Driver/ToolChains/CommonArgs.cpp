@@ -76,6 +76,10 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
   if (Triple.isAndroid())
     return true;
 
+  // The PlayStation 1: nugget builds with -fomit-frame-pointer.
+  if (Triple.isOSPSX())
+    return false;
+
   switch (Triple.getArch()) {
   case llvm::Triple::xcore:
   case llvm::Triple::wasm32:

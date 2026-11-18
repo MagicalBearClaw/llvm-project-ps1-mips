@@ -283,6 +283,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
       return std::make_unique<LinuxTargetInfo<MipsTargetInfo>>(Triple, Opts);
     case llvm::Triple::RTEMS:
       return std::make_unique<RTEMSTargetInfo<MipsTargetInfo>>(Triple, Opts);
+    case llvm::Triple::PSX:
+      return std::make_unique<PSXTargetInfo<MipsTargetInfo>>(Triple, Opts);
     case llvm::Triple::FreeBSD:
       return std::make_unique<FreeBSDTargetInfo<MipsTargetInfo>>(Triple, Opts);
     case llvm::Triple::NetBSD:
@@ -302,6 +304,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
       }
     case llvm::Triple::RTEMS:
       return std::make_unique<RTEMSTargetInfo<MipsTargetInfo>>(Triple, Opts);
+    case llvm::Triple::PSX:
+      return std::make_unique<PSXTargetInfo<MipsTargetInfo>>(Triple, Opts);
     case llvm::Triple::FreeBSD:
       return std::make_unique<FreeBSDTargetInfo<MipsTargetInfo>>(Triple, Opts);
     case llvm::Triple::NetBSD:

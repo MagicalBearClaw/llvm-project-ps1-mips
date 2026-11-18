@@ -1464,6 +1464,27 @@ TEST(TripleTest, ParsedIDs) {
   EXPECT_EQ(Triple::riscv32, T.getArch());
   EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
   EXPECT_EQ(Triple::CheriotRTOS, T.getOS());
+
+  // PlayStation 1 (MIC-15).
+  T = Triple("mipsel-sony-psx");
+  EXPECT_EQ(Triple::mipsel, T.getArch());
+  EXPECT_EQ(Triple::Sony, T.getVendor());
+  EXPECT_EQ(Triple::PSX, T.getOS());
+  EXPECT_EQ(Triple::UnknownEnvironment, T.getEnvironment());
+  EXPECT_TRUE(T.isOSPSX());
+  EXPECT_TRUE(T.isOSBinFormatELF());
+  EXPECT_FALSE(T.isPS());
+
+  T = Triple("mipsel-unknown-psx");
+  EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
+  EXPECT_EQ(Triple::PSX, T.getOS());
+  EXPECT_TRUE(T.isOSPSX());
+
+  T = Triple("mipsel-unknown-none-elf");
+  EXPECT_FALSE(T.isOSPSX());
+
+  EXPECT_EQ("sony", Triple::getVendorTypeName(Triple::Sony));
+  EXPECT_EQ("psx", Triple::getOSTypeName(Triple::PSX));
 }
 
 static std::string Join(StringRef A, StringRef B, StringRef C) {

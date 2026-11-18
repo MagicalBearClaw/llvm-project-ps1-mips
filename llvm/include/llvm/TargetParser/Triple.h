@@ -203,7 +203,8 @@ public:
     OpenEmbedded,
     Intel,
     Meta,
-    LastVendorType = Meta
+    Sony,
+    LastVendorType = Sony
   };
   enum OSType {
     UnknownOS,
@@ -252,7 +253,8 @@ public:
     Serenity,
     Vulkan, // Vulkan SPIR-V
     CheriotRTOS,
-    LastOSType = CheriotRTOS
+    PSX, // PlayStation 1: bare metal, BIOS only
+    LastOSType = PSX
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -662,6 +664,9 @@ public:
   bool isOSFuchsia() const {
     return getOS() == Triple::Fuchsia;
   }
+
+  /// Tests whether the OS is the PlayStation 1 (no OS, BIOS only).
+  bool isOSPSX() const { return getOS() == Triple::PSX; }
 
   bool isOSDragonFly() const { return getOS() == Triple::DragonFly; }
 
