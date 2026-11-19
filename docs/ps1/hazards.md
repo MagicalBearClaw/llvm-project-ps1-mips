@@ -26,7 +26,7 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | # | Hazard | LLVM codegen | LLVM IAS | Fix |
 |---|---|---|---|---|
 | H1 | GPR load delay (lb/lbu/lh/lhu/lw) | correct | **wrong** | MIC-19 |
-| H2 | Load delay across branches, calls, returns | correct | n/a | MIC-17 (audit) |
+| H2 | Load delay across branches, calls, returns | correct (MIC-17) | n/a | none |
 | H3 | lwl/lwr pair | suboptimal | **wrong** | MIC-55, MIC-19 |
 | H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | **wrong** | MIC-20 |
 | H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | mfc2 delay correct (MIC-16); rest **wrong** | **wrong** | MIC-42, MIC-20, MIC-44 |
@@ -73,14 +73,32 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 * **GCC 16.** Never puts a load whose result is live in a return or call delay
   slot: `lw $2,0($4); jr $31; nop`.
 * **ASPSX.** Same rule as H1; looks across labels.
-* **LLVM codegen: correct** for the cases tested.
+* **The rule.** The instruction after a load is decided by execution order.
+  A block that falls through continues with the first real instruction of
+  the next block, and that instruction is checked like any other; a label in
+  between changes nothing, because a branch to the label does not run the
+  load. A load in a branch delay slot is checked against the first real
+  instruction of both successors. Where the next instruction is unknown (the
+  slot of a call, a return or an indirect branch, or the end of the
+  function), the register is assumed to be read. GCC 16 with gas applies the
+  same rule: `lw $2; $L7: addiu $5,$5,-1` gets no nop.
+* **LLVM codegen: correct (MIC-17).**
   `MipsDelaySlotFiller::delayHasHazard` refuses loads in the slot of calls,
   returns and indirect branches, and checks the first instruction of both
-  successors of a conditional branch. `getNextMachineInstr` only follows
-  fall-through successors and assumes a hazard otherwise. MIC-17 audits the
-  remaining edges: blocks with several predecessors, empty blocks, and
-  branch expansion after the delay-slot filler.
-* Tests: [load-delay-control-flow.ll](../../llvm/test/CodeGen/Mips/ps1/load-delay-control-flow.ll).
+  successors of a conditional branch. `getNextMachineInstr` in
+  `MipsBranchExpansion` follows fall-through successors and assumes a hazard
+  otherwise. MIC-17 fixed the filler reading a successor's first
+  MachineInstr: with `-g` a `DBG_VALUE` there hid the real use, so a load
+  could sit in a `j` slot right before an instruction reading it. It also
+  cost a nop when the `DBG_VALUE` was at the fall-through block. The filler
+  now looks past instructions that emit no code and follows empty blocks.
+* **Remaining differences from GCC.** Inline asm at the start of the next
+  block gets a nop (H5); gas reads the asm text and may not. The hazard pass
+  in `MipsBranchExpansion` does not re-check a load already in a delay slot,
+  so the filler is the only guard there.
+* Tests: [hazards-across-blocks.ll](../../llvm/test/CodeGen/Mips/ps1/hazards-across-blocks.ll),
+  [load-delay-slot-debug.mir](../../llvm/test/CodeGen/Mips/ps1/load-delay-slot-debug.mir),
+  [load-delay-control-flow.ll](../../llvm/test/CodeGen/Mips/ps1/load-delay-control-flow.ll).
 
 ## H3. lwl/lwr pair
 
@@ -121,8 +139,13 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   MIC-11 made it look inside bundles (`mflo; nop; bnez; div`).
   `SafeAfterMflo` only checks `IsDIVMULT`, so `mthi`/`mtlo` are not covered.
   Codegen does not emit those today; MIC-20 covers it.
+  Across blocks: the lookahead follows fall-through, so `mflo` ending a block
+  gets two `nop`s before a `mult` at the next block. A taken branch needs
+  none, because the branch and its delay slot are the two instructions and
+  the filler never puts `mflo`/`mfhi` in a delay slot (MIC-17).
 * **LLVM IAS: wrong.** Emits `mflo; mult` as written in reorder mode.
 * Tests: [hilo-hazard.ll](../../llvm/test/CodeGen/Mips/ps1/hilo-hazard.ll),
+  [hazards-across-blocks.ll](../../llvm/test/CodeGen/Mips/ps1/hazards-across-blocks.ll),
   [hilo-reorder.s](../../llvm/test/MC/Mips/ps1/hilo-reorder.s) (XFAIL, MIC-20).
 
 ## H5. GTE (COP2)

@@ -1,0 +1,184 @@
+# The delay slot filler must judge a load in a branch delay slot by the first
+# instruction that executes at the branch target or fallthrough. Debug
+# instructions emit no code, so they must be looked past, and a successor that
+# holds only debug instructions falls through to the next block (MIC-17).
+#
+# Before MIC-17 the filler read the successor's first MachineInstr. A
+# DBG_VALUE there hid the real use, so with -g a load could be put right before
+# an instruction that reads the stale register. A DBG_VALUE at the fallthrough
+# block made the filler assume the worst, so -g also cost nops.
+#
+# RUN: llc %s -o - -mtriple=mipsel-sony-psx -run-pass=mips-delay-slot-filler \
+# RUN:   | FileCheck %s
+
+--- |
+  @g = global i32 0
+
+  define void @dbg_then_use() !dbg !4 { ret void }
+  define void @dbg_only_block_then_use() !dbg !11 { ret void }
+  define void @dbg_then_unrelated() !dbg !12 { ret void }
+  define void @cond_dbg_at_fallthrough() !dbg !13 { ret void }
+  define void @cond_dbg_then_use_at_fallthrough() !dbg !14 { ret void }
+
+  !llvm.dbg.cu = !{!0}
+  !llvm.module.flags = !{!2, !3}
+
+  !0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, emissionKind: FullDebug)
+  !1 = !DIFile(filename: "t.c", directory: "/")
+  !2 = !{i32 2, !"Debug Info Version", i32 3}
+  !3 = !{i32 7, !"Dwarf Version", i32 4}
+  !4 = distinct !DISubprogram(name: "dbg_then_use", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+  !5 = !DISubroutineType(types: !6)
+  !6 = !{null}
+  !8 = !DILocalVariable(name: "x", scope: !4, file: !1, line: 1, type: !9)
+  !9 = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+  !10 = !DILocation(line: 2, scope: !4)
+  !11 = distinct !DISubprogram(name: "dbg_only_block_then_use", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+  !12 = distinct !DISubprogram(name: "dbg_then_unrelated", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+  !13 = distinct !DISubprogram(name: "cond_dbg_at_fallthrough", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+  !14 = distinct !DISubprogram(name: "cond_dbg_then_use_at_fallthrough", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
+  !20 = !DILocalVariable(name: "x", scope: !11, file: !1, line: 1, type: !9)
+  !21 = !DILocation(line: 2, scope: !11)
+  !22 = !DILocalVariable(name: "x", scope: !12, file: !1, line: 1, type: !9)
+  !23 = !DILocation(line: 2, scope: !12)
+  !24 = !DILocalVariable(name: "x", scope: !13, file: !1, line: 1, type: !9)
+  !25 = !DILocation(line: 2, scope: !13)
+  !26 = !DILocalVariable(name: "x", scope: !14, file: !1, line: 1, type: !9)
+  !27 = !DILocation(line: 2, scope: !14)
+...
+
+# The target's first real instruction reads $v0: the load stays out of the slot.
+---
+name: dbg_then_use
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: dbg_then_use
+  ; CHECK:       $v0 = LW $at, target-flags(mips-abs-lo) @g
+  ; CHECK-NEXT:  J %bb.2, implicit-def $at {
+  ; CHECK-NEXT:    $zero = SLL $zero, 0
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.2
+    $at = LUi target-flags(mips-abs-hi) @g
+    $v0 = LW $at, target-flags(mips-abs-lo) @g :: (load (s32) from @g)
+    J %bb.2, implicit-def $at
+
+  bb.1:
+    $v0 = ADDiu $zero, 7
+
+  bb.2:
+    DBG_VALUE $a3, $noreg, !8, !DIExpression(), debug-location !10
+    $v1 = ADDiu $v0, 1
+    $a0 = ADDiu $zero, 3
+    PseudoReturn $ra, implicit $v1
+...
+
+# The target holds only a DBG_VALUE and falls through to a block that reads $v0.
+---
+name: dbg_only_block_then_use
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: dbg_only_block_then_use
+  ; CHECK:       $v0 = LW $at, target-flags(mips-abs-lo) @g
+  ; CHECK-NEXT:  J %bb.2, implicit-def $at {
+  ; CHECK-NEXT:    $zero = SLL $zero, 0
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.2
+    $at = LUi target-flags(mips-abs-hi) @g
+    $v0 = LW $at, target-flags(mips-abs-lo) @g :: (load (s32) from @g)
+    J %bb.2, implicit-def $at
+
+  bb.1:
+    $v0 = ADDiu $zero, 7
+
+  bb.2:
+    successors: %bb.3
+    DBG_VALUE $a3, $noreg, !20, !DIExpression(), debug-location !21
+
+  bb.3:
+    $v1 = ADDiu $v0, 1
+    $a0 = ADDiu $zero, 3
+    PseudoReturn $ra, implicit $v1
+...
+
+# The target's first real instruction does not read $v0: the slot is filled,
+# the same as without the DBG_VALUE.
+---
+name: dbg_then_unrelated
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: dbg_then_unrelated
+  ; CHECK:       J %bb.2, implicit-def $at {
+  ; CHECK-NEXT:    $v0 = LW $at, target-flags(mips-abs-lo) @g
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.2
+    $at = LUi target-flags(mips-abs-hi) @g
+    $v0 = LW $at, target-flags(mips-abs-lo) @g :: (load (s32) from @g)
+    J %bb.2, implicit-def $at
+
+  bb.1:
+    $v0 = ADDiu $zero, 7
+
+  bb.2:
+    DBG_VALUE $a3, $noreg, !22, !DIExpression(), debug-location !23
+    $t0 = ADDiu $zero, 1
+    $v1 = ADDiu $v0, 1
+    PseudoReturn $ra, implicit $v1
+...
+
+# Conditional branch: neither successor's first real instruction reads $v0, so
+# the slot is filled. A DBG_VALUE at the fallthrough must not force a nop.
+---
+name: cond_dbg_at_fallthrough
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: cond_dbg_at_fallthrough
+  ; CHECK:       BEQ $a0, $zero, %bb.2, implicit-def $at {
+  ; CHECK-NEXT:    $v0 = LW $at, target-flags(mips-abs-lo) @g
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.1, %bb.2
+    $at = LUi target-flags(mips-abs-hi) @g
+    $v0 = LW $at, target-flags(mips-abs-lo) @g :: (load (s32) from @g)
+    BEQ $a0, $zero, %bb.2, implicit-def $at
+
+  bb.1:
+    DBG_VALUE $a3, $noreg, !24, !DIExpression(), debug-location !25
+    $t0 = ADDiu $zero, 1
+    $v1 = ADDiu $v0, 1
+    PseudoReturn $ra, implicit $v1
+
+  bb.2:
+    $t0 = ADDiu $zero, 2
+    $v1 = ADDiu $v0, 2
+    PseudoReturn $ra, implicit $v1
+...
+
+# Conditional branch: the fallthrough's first real instruction reads $v0.
+---
+name: cond_dbg_then_use_at_fallthrough
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: cond_dbg_then_use_at_fallthrough
+  ; CHECK:       $v0 = LW $at, target-flags(mips-abs-lo) @g
+  ; CHECK-NEXT:  BEQ $a0, $zero, %bb.2, implicit-def $at {
+  ; CHECK-NEXT:    $zero = SLL $zero, 0
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.1, %bb.2
+    $at = LUi target-flags(mips-abs-hi) @g
+    $v0 = LW $at, target-flags(mips-abs-lo) @g :: (load (s32) from @g)
+    BEQ $a0, $zero, %bb.2, implicit-def $at
+
+  bb.1:
+    DBG_VALUE $a3, $noreg, !26, !DIExpression(), debug-location !27
+    $v1 = ADDiu $v0, 1
+    PseudoReturn $ra, implicit $v1
+
+  bb.2:
+    $t0 = ADDiu $zero, 2
+    $v1 = ADDiu $v0, 2
+    PseudoReturn $ra, implicit $v1
+...
