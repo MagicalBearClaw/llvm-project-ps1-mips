@@ -80,6 +80,21 @@ static cl::opt<bool> DisableBackwardSearch(
 
 extern cl::opt<CompactBranchPolicy> MipsCompactBranchPolicy;
 
+/// Return the first instruction that executes when control enters \p MBB, or
+/// null if it is unknown. Instructions that emit no code, such as DBG_VALUE,
+/// are looked past, and a block that emits nothing is followed into the block
+/// it falls through to.
+static const MachineInstr *getFirstExecutedInstr(const MachineBasicBlock *MBB) {
+  while (MBB) {
+    for (const MachineInstr &MI : *MBB)
+      if (!MI.isMetaInstruction())
+        return &MI;
+    const MachineBasicBlock *Next = MBB->getNextNode();
+    MBB = Next && MBB->isSuccessor(Next) ? Next : nullptr;
+  }
+  return nullptr;
+}
+
 namespace {
 
   using Iter = MachineBasicBlock::iterator;
@@ -282,8 +297,7 @@ namespace {
         MBB++;
 
         Changed |= runOnMachineBasicBlock(
-            *curMBB, (MBB != F.end() && !(*MBB).empty()) ? &(*MBB).instr_front()
-                                                         : nullptr);
+            *curMBB, MBB != F.end() ? getFirstExecutedInstr(&*MBB) : nullptr);
       }
 
       // This pass invalidates liveness information when it reorders
@@ -308,7 +322,7 @@ namespace {
 
   private:
     bool runOnMachineBasicBlock(MachineBasicBlock &MBB,
-                                MachineInstr *FirstNextMBBInstr);
+                                const MachineInstr *FirstNextMBBInstr);
 
     Iter replaceWithCompactBranch(MachineBasicBlock &MBB, Iter Branch,
                                   const DebugLoc &DL);
@@ -671,7 +685,7 @@ static int getEquivalentCallShort(int Opcode) {
 /// runOnMachineBasicBlock - Fill in delay slots for the given basic block.
 /// We assume there is only one delay slot per delayed instruction.
 bool MipsDelaySlotFiller::runOnMachineBasicBlock(
-    MachineBasicBlock &MBB, MachineInstr *FirstNextMBBInstr) {
+    MachineBasicBlock &MBB, const MachineInstr *FirstNextMBBInstr) {
   bool Changed = false;
   const MipsSubtarget &STI = MBB.getParent()->getSubtarget<MipsSubtarget>();
   bool InMicroMipsMode = STI.inMicroMipsMode();
@@ -1050,13 +1064,14 @@ bool MipsDelaySlotFiller::delayHasHazard(const MipsSubtarget &STI,
       // If this is a direct branch we should find a MBB operand for the jump
       // target
       const MachineBasicBlock *TargetMBB = BranchInfo.getBranchTarget();
-      if (!TargetMBB || TargetMBB->empty()) {
+      const MachineInstr *BranchTargetInstr =
+          TargetMBB ? getFirstExecutedInstr(TargetMBB) : nullptr;
+      if (!BranchTargetInstr) {
         return true;
       }
 
-      const auto &BranchTargetInstr = TargetMBB->instr_front();
       bool HasNewHazard =
-          !TII->SafeInLoadDelaySlot(BranchTargetInstr, Candidate);
+          !TII->SafeInLoadDelaySlot(*BranchTargetInstr, Candidate);
       // If the branch is unconditional then we do not need to bother to check
       // the next instruction after the branch
       if (!BranchInfo.isUnconditionalBranch()) {
