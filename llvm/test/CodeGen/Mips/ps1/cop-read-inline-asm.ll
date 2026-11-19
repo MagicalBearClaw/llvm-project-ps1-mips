@@ -4,9 +4,10 @@
 ; must not use the result. gas tracks this across the asm boundary and pads
 ; with a nop when needed. See docs/ps1/hazards.md, H5 and H6.
 ;
-; Status: WRONG in LLVM 22.1.8: `mfc0 $1, $12` is followed directly by
-; `addiu $1, $1, 1`. MIC-16 (codegen) and MIC-20 (integrated assembler) fix it.
-; XFAIL: *
+; Status: correct since MIC-16. The compiler cannot see inside an asm block,
+; so it treats asm outputs like loaded registers: the next instruction gets a
+; nop only if it reads one. Between two asm blocks the operands decide, so
+; consecutive GTE asm statements are not padded unless one feeds the other.
 ; RUN: llc < %s -mtriple=mipsel-unknown-none-elf -mcpu=mips1 -mattr=+soft-float \
 ; RUN:   -relocation-model=static -frame-pointer=none -filetype=obj \
 ; RUN:   | llvm-objdump -d --no-show-raw-insn - | FileCheck %s
@@ -31,4 +32,25 @@ define i32 @read_gte() {
   %a = add i32 %v, 1
   %r = mul i32 %a, %a
   ret i32 %r
+}
+
+; The second asm statement takes the first one's output as input: nop.
+define i32 @asm_feeds_asm() {
+; CHECK-LABEL: <asm_feeds_asm>:
+; CHECK:       mfc2 $[[R:[0-9]+]], $9
+; CHECK-NEXT:  nop
+; CHECK-NEXT:  mtc2 $[[R]], $10
+  %v = call i32 asm sideeffect "mfc2 $0, $$9", "=r"()
+  call void asm sideeffect "mtc2 $0, $$10", "r"(i32 %v)
+  ret i32 0
+}
+
+; Independent asm statements, as in psyqo's GTE register writes: no nop.
+define void @asm_independent(i32 %a, i32 %b) {
+; CHECK-LABEL: <asm_independent>:
+; CHECK:       mtc2 $4, $0
+; CHECK-NEXT:  mtc2 $5, $1
+  call void asm sideeffect "mtc2 $0, $$0", "r"(i32 %a)
+  call void asm sideeffect "mtc2 $0, $$1", "r"(i32 %b)
+  ret void
 }

@@ -29,8 +29,8 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H2 | Load delay across branches, calls, returns | correct | n/a | MIC-17 (audit) |
 | H3 | lwl/lwr pair | suboptimal | **wrong** | MIC-55, MIC-19 |
 | H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | **wrong** | MIC-20 |
-| H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | **wrong** | **wrong** | MIC-42, MIC-16, MIC-20, MIC-44 |
-| H6 | COP0 read delay (mfc0) | **wrong** (inline asm) | **wrong** | MIC-16, MIC-18 |
+| H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | mfc2 delay correct (MIC-16); rest **wrong** | **wrong** | MIC-42, MIC-20, MIC-44 |
+| H6 | COP0 read delay (mfc0) | correct (MIC-16) | **wrong** | MIC-18, MIC-20 |
 | H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | **wrong** | MIC-18 |
 | H8 | `rfe` | n/a | **wrong** (missing) | MIC-18 |
 | H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
@@ -145,14 +145,15 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 * **LLVM: wrong.**
   * IAS rejects `cfc2`/`ctc2` on mips1 ("requires a CPU feature") and does not
     know `cop2 imm25`.
-  * Codegen: inline-asm `mfc2` followed by a use gets no `nop`.
+  * Codegen: the `mfc2` read delay is handled since MIC-16, including after
+    inline asm. `cfc2` joins it once MIC-42 adds the instruction.
   * No write-latency handling anywhere.
   * Hardware-faithful output pads two `nop`s after `mtc2`/`ctc2`/`lwc2` before
     a dependent GTE command, which is one more than gas.
 * Tests: [cop2-gte-hazards.s](../../llvm/test/MC/Mips/ps1/cop2-gte-hazards.s)
   (XFAIL, MIC-42/MIC-20/MIC-44),
-  [cop-read-inline-asm.ll](../../llvm/test/CodeGen/Mips/ps1/cop-read-inline-asm.ll)
-  (XFAIL, MIC-16).
+  [cop-read-inline-asm.ll](../../llvm/test/CodeGen/Mips/ps1/cop-read-inline-asm.ll),
+  [cop-read-delay.mir](../../llvm/test/CodeGen/Mips/ps1/cop-read-delay.mir).
 * Note: `cop2-gte-hazards.s` currently fails at assembly. After MIC-42 it will
   still fail, on the missing `nop`s, until MIC-20/MIC-44 land.
 
@@ -166,13 +167,20 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   pending read across the `#APP`/`#NO_APP` boundary into the following
   `.set noreorder` code and pads with a `nop` only if the next instruction
   reads the register.
-* **LLVM codegen: wrong.** Inline-asm `mfc0 $1, $12` is followed directly by
-  `addiu $1, $1, 1`. The asm block is opaque to `handleLoadDelaySlot`.
+* **LLVM codegen: correct since MIC-16.** `MFC0` and `MFC2` are in
+  `HasLoadDelaySlot`. Inline asm is opaque, so its outputs are treated like
+  loaded registers: the next instruction gets a `nop` only if it reads one,
+  which is what gas does across `#APP`. Between two asm blocks the operands
+  decide, so independent GTE asm statements get no `nop`. LLVM 22.1.8 emitted
+  inline-asm `mfc0 $1, $12` followed directly by `addiu $1, $1, 1`.
 * **LLVM IAS: wrong.** No `nop` after `mfc0` in reorder mode.
 * Side note: LLVM picks `$at` for the `=r` asm output and warns "used $at
-  without .set noat". GCC picks `$2`.
-* Tests: [cop-read-inline-asm.ll](../../llvm/test/CodeGen/Mips/ps1/cop-read-inline-asm.ll)
-  (XFAIL, MIC-16), [cop0-hazards.s](../../llvm/test/MC/Mips/ps1/cop0-hazards.s)
+  without .set noat". GCC picks `$2`. A macro in the asm text that expands
+  through `$at` would corrupt the operand. MIC-132 fixes it.
+* Tests: [cop-read-inline-asm.ll](../../llvm/test/CodeGen/Mips/ps1/cop-read-inline-asm.ll),
+  [cop-read-delay.mir](../../llvm/test/CodeGen/Mips/ps1/cop-read-delay.mir),
+  [cop-read-delay-slot.mir](../../llvm/test/CodeGen/Mips/ps1/cop-read-delay-slot.mir),
+  [cop0-hazards.s](../../llvm/test/MC/Mips/ps1/cop0-hazards.s)
   (XFAIL, MIC-18).
 
 ## H7. COP0 write latency
