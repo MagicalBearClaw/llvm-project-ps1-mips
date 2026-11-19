@@ -1,0 +1,61 @@
+# MFC0 and MFC2 have the same one-instruction delay as memory loads on MIPS I
+# (psx-spx "CPU Coprocessor Opcodes", Caution - Load Delay). A use of the
+# destination right after needs a nop (MIC-16; docs/ps1/hazards.md H5, H6).
+# CFC2 joins the list once it exists (MIC-42).
+#
+# RUN: llc %s -o - -mtriple=mipsel-unknown-none-elf -mcpu=r3000a \
+# RUN:   -run-pass=mips-branch-expansion | FileCheck %s --check-prefix=MIPS1
+# RUN: llc %s -o - -mtriple=mipsel-unknown-none-elf -mcpu=mips1 \
+# RUN:   -run-pass=mips-branch-expansion | FileCheck %s --check-prefix=MIPS1
+# RUN: llc %s -o - -mtriple=mipsel-unknown-none-elf -mcpu=mips2 \
+# RUN:   -run-pass=mips-branch-expansion | FileCheck %s --check-prefix=MIPS2
+
+---
+name: mfc0_use
+tracksRegLiveness: false
+body: |
+  bb.0:
+    ; MIPS1-LABEL: name: mfc0_use
+    ; MIPS1:       $v0 = MFC0 $cop012, 0 {
+    ; MIPS1-NEXT:    $zero = SLL $zero, 0
+    ; MIPS1-NEXT:  }
+    ; MIPS1-NEXT:  $v0 = ADDiu $v0, 1
+    ; MIPS2-LABEL: name: mfc0_use
+    ; MIPS2:       $v0 = MFC0 $cop012, 0
+    ; MIPS2-NEXT:  $v0 = ADDiu $v0, 1
+    $v0 = MFC0 $cop012, 0
+    $v0 = ADDiu $v0, 1
+    RetRA implicit $v0
+...
+---
+name: mfc2_use
+tracksRegLiveness: false
+body: |
+  bb.0:
+    ; MIPS1-LABEL: name: mfc2_use
+    ; MIPS1:       $v0 = MFC2 $cop29, 0 {
+    ; MIPS1-NEXT:    $zero = SLL $zero, 0
+    ; MIPS1-NEXT:  }
+    ; MIPS1-NEXT:  $v0 = ADDiu $v0, 1
+    ; MIPS2-LABEL: name: mfc2_use
+    ; MIPS2:       $v0 = MFC2 $cop29, 0
+    ; MIPS2-NEXT:  $v0 = ADDiu $v0, 1
+    $v0 = MFC2 $cop29, 0
+    $v0 = ADDiu $v0, 1
+    RetRA implicit $v0
+...
+---
+# An independent instruction already fills the delay: no nop.
+name: mfc0_independent
+tracksRegLiveness: false
+body: |
+  bb.0:
+    ; MIPS1-LABEL: name: mfc0_independent
+    ; MIPS1:       $v0 = MFC0 $cop012, 0
+    ; MIPS1-NEXT:  $v1 = ADDiu $zero, 7
+    ; MIPS1-NEXT:  $v0 = ADDu $v0, $v1
+    $v0 = MFC0 $cop012, 0
+    $v1 = ADDiu $zero, 7
+    $v0 = ADDu $v0, $v1
+    RetRA implicit $v0
+...

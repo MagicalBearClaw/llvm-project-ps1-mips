@@ -1,0 +1,34 @@
+# The branch delay slot filler must not move an MFC0/MFC2 into a slot where
+# the next instruction (at the branch target or fallthrough) reads the result,
+# which would put the use in the coprocessor read's delay (MIC-16).
+#
+# This holds before and after MIC-16: MFC0 and MFC2 have unmodeled side
+# effects, so the filler never moves them. HasLoadDelaySlot now lists them
+# too, so a change to the side-effect flags would still be caught there. This
+# test guards the combination.
+#
+# RUN: llc %s -o - -mtriple=mipsel-unknown-none-elf -mcpu=r3000a \
+# RUN:   -run-pass=mips-delay-slot-filler | FileCheck %s
+
+---
+name: mfc0_used_at_target
+tracksRegLiveness: false
+body: |
+  ; CHECK-LABEL: name: mfc0_used_at_target
+  ; CHECK:       $v0 = MFC0 $cop012, 0
+  ; CHECK-NEXT:  BEQ $a0, $zero, %bb.{{[0-9]+}}, implicit-def $at {
+  ; CHECK-NEXT:    $zero = SLL $zero, 0
+  ; CHECK-NEXT:  }
+  bb.0:
+    successors: %bb.1, %bb.2
+    $v0 = MFC0 $cop012, 0
+    BEQ $a0, $zero, %bb.1, implicit-def $at
+
+  bb.2:
+    $v0 = ADDiu $v0, 2
+    RetRA implicit $v0
+
+  bb.1:
+    $v0 = ADDiu $v0, 1
+    RetRA implicit $v0
+...
