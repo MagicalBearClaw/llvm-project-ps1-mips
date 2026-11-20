@@ -32,6 +32,8 @@ class StringRef;
 class Target;
 class Triple;
 
+MCInstrInfo *createMipsMCInstrInfo();
+
 MCCodeEmitter *createMipsMCCodeEmitterEB(const MCInstrInfo &MCII,
                                          MCContext &Ctx);
 MCCodeEmitter *createMipsMCCodeEmitterEL(const MCInstrInfo &MCII,

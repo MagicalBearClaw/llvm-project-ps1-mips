@@ -28,10 +28,10 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H1 | GPR load delay (lb/lbu/lh/lhu/lw) | correct | correct (MIC-19) | none |
 | H2 | Load delay across branches, calls, returns | correct (MIC-17) | n/a | none |
 | H3 | lwl/lwr pair | suboptimal | correct (MIC-19) | MIC-55 |
-| H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | **wrong** | MIC-20 |
-| H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | mfc2 delay correct (MIC-16); rest **wrong** | **wrong** | MIC-42, MIC-20, MIC-44 |
+| H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | correct (MIC-20) | none |
+| H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | mfc2 delay correct (MIC-16); rest **wrong** | mfc2 delay and mtc2 write as gas (MIC-19, MIC-20); missing opcodes | MIC-42, MIC-44 |
 | H6 | COP0 read delay (mfc0) | correct (MIC-16) | correct (MIC-19) | MIC-18 |
-| H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | **wrong** | MIC-18 |
+| H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | pads 1, as gas (MIC-20) | MIC-18 |
 | H8 | `rfe` | n/a | **wrong** (missing) | MIC-18 |
 | H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
 | H10 | Interrupt during a load delay | correct | correct | none |
@@ -164,10 +164,26 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   gets two `nop`s before a `mult` at the next block. A taken branch needs
   none, because the branch and its delay slot are the two instructions and
   the filler never puts `mflo`/`mfhi` in a delay slot (MIC-17).
-* **LLVM IAS: wrong.** Emits `mflo; mult` as written in reorder mode.
+* **gas details** (binutils 2.47, measured for MIC-20): after `mflo`, the next
+  two instructions must not write LO (`mult multu div divu mtlo`); after
+  `mfhi`, HI (`mult multu div divu mthi`). So `mflo; mthi` needs no `nop`.
+  The `nop`s go right before the writer, and before a label in front of it.
+  Data, alignment, a section switch and the end of the file pad for the
+  worst case, two instructions after the `mflo`/`mfhi`. A branch and its
+  delay slot count as the two instructions.
+* **LLVM IAS: correct (MIC-20).** `MipsELFStreamer` keeps the last two
+  instructions, as gas does, and pads by the same rules, on MIPS I.
+  `hilo-cop-gas-parity.s` matches `as -march=r3000 -O1` byte for byte. gas
+  also pads HI/LO on MIPS II–V; the integrated assembler does not, so output
+  for those ISAs is unchanged.
+* **Inline asm.** An `mflo` at the end of an asm block followed by a
+  compiler-generated `mult` got only the one `nop` codegen adds after asm
+  outputs. The streamer now adds the second, as gas does across `#APP`.
 * Tests: [hilo-hazard.ll](../../llvm/test/CodeGen/Mips/ps1/hilo-hazard.ll),
   [hazards-across-blocks.ll](../../llvm/test/CodeGen/Mips/ps1/hazards-across-blocks.ll),
-  [hilo-reorder.s](../../llvm/test/MC/Mips/ps1/hilo-reorder.s) (XFAIL, MIC-20).
+  [hilo-reorder.s](../../llvm/test/MC/Mips/ps1/hilo-reorder.s),
+  [hilo-cop-gas-parity.s](../../llvm/test/MC/Mips/ps1/hilo-cop-gas-parity.s),
+  [inline-asm-hilo.ll](../../llvm/test/CodeGen/Mips/ps1/inline-asm-hilo.ll).
 
 ## H5. GTE (COP2)
 
@@ -194,7 +210,13 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   * IAS: the `mfc2` read delay is handled since MIC-19, as gas. Like gas, a
     read of a GTE register right after `lwc2` to it is not padded; MIC-44
     checks that on hardware.
-  * No write-latency handling anywhere.
+  * IAS (MIC-20), as gas: after `mtc0`/`mtc2` (and `ctc2` once it exists),
+    one `nop` before the next COP0 or COP2 instruction (`mfc0 mtc0 mfc2 mtc2
+    swc2`), across coprocessors, but not before `lwc2`, `rfe` or a COP1
+    instruction. Two when the next instruction is unknown. This pads
+    psyqo-style `mtc2; mtc2` with a `nop`, as GCC 16 with gas does;
+    MIC-44 checks whether hardware needs it.
+  * Codegen: no write-latency handling.
   * Hardware-faithful output pads two `nop`s after `mtc2`/`ctc2`/`lwc2` before
     a dependent GTE command, which is one more than gas.
 * Tests: [cop2-gte-hazards.s](../../llvm/test/MC/Mips/ps1/cop2-gte-hazards.s)
@@ -249,7 +271,9 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   COP2 instruction too early is that it runs while COP2 is still disabled.
   The retail BIOS shell and OpenBIOS both leave COP2 enabled before user code
   runs.
-* **LLVM IAS: wrong.** Pads nothing.
+* **LLVM IAS: pads one `nop`, as gas (MIC-20).** After any `mtc0`, before the
+  next COP0 or COP2 instruction (H5). MIC-18 raises it to two after
+  `mtc0 $x, $12` before a COP2 instruction.
 * **Decision (MIC-18): pad two instructions** between `mtc0 $x, $12` and the
   next COP2 instruction in reorder mode. Compiled code runs from cached RAM,
   where two cycles means two instructions. PCSX-Redux does not emulate this

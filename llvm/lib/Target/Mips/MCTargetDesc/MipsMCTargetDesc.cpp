@@ -152,7 +152,7 @@ StringRef MIPS_MC::selectMipsCPU(const Triple &TT, StringRef CPU) {
   return CPU;
 }
 
-static MCInstrInfo *createMipsMCInstrInfo() {
+MCInstrInfo *llvm::createMipsMCInstrInfo() {
   MCInstrInfo *X = new MCInstrInfo();
   InitMipsMCInstrInfo(X);
   return X;

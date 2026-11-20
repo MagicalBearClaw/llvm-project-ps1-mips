@@ -2,11 +2,10 @@
 # mflo/mfhi and the next mult/multu/div/divu/mthi/mtlo. See docs/ps1/hazards.md,
 # H4.
 #
-# Status: WRONG in LLVM 22.1.8: the integrated assembler inserts nothing.
-# MIC-20 fixes this.
-# XFAIL: *
+# Status: correct since MIC-20 (MipsELFStreamer), for MIPS I.
+# hilo-cop-gas-parity.s compares a larger corpus with gas byte for byte.
 # RUN: llvm-mc %s -triple=mipsel-unknown-none-elf -mcpu=mips1 -filetype=obj \
-# RUN:   | llvm-objdump -d --no-show-raw-insn - | FileCheck %s
+# RUN:   | llvm-objdump -d -z --no-show-raw-insn - | FileCheck %s
 
         .set reorder
 # CHECK:      mflo $2

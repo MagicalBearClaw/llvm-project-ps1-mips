@@ -5916,13 +5916,16 @@ bool MipsAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
   switch (MatchResult) {
   case Match_Success: {
-    // gas pads MIPS I load delays in reorder mode (docs/ps1/hazards.md, H1).
+    // gas pads MIPS I hazards in reorder mode: load delays, HI/LO and
+    // coprocessor writes (docs/ps1/hazards.md, H1, H4, H5, H6). gas also pads
+    // the HI/LO and coprocessor rules on some later ISAs; that is not done
+    // here, so their output stays as it was.
     MipsTargetStreamer &TOut = getTargetStreamer();
-    bool PadLoadDelays =
+    bool PadHazards =
         AssemblerOptions.back()->isReorder() && hasMips1() && !hasMips2();
-    TOut.setLoadDelayPadding(PadLoadDelays ? &MII : nullptr);
+    TOut.setHazardPadding(PadHazards);
     bool Failed = processInstruction(Inst, IDLoc, Out, STI);
-    TOut.setLoadDelayPadding(nullptr);
+    TOut.setHazardPadding(false);
     return Failed;
   }
   case Match_MissingFeature:
