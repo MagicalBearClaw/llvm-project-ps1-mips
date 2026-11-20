@@ -5915,10 +5915,16 @@ bool MipsAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       MatchInstructionImpl(Operands, Inst, ErrorInfo, MatchingInlineAsm);
 
   switch (MatchResult) {
-  case Match_Success:
-    if (processInstruction(Inst, IDLoc, Out, STI))
-      return true;
-    return false;
+  case Match_Success: {
+    // gas pads MIPS I load delays in reorder mode (docs/ps1/hazards.md, H1).
+    MipsTargetStreamer &TOut = getTargetStreamer();
+    bool PadLoadDelays =
+        AssemblerOptions.back()->isReorder() && hasMips1() && !hasMips2();
+    TOut.setLoadDelayPadding(PadLoadDelays ? &MII : nullptr);
+    bool Failed = processInstruction(Inst, IDLoc, Out, STI);
+    TOut.setLoadDelayPadding(nullptr);
+    return Failed;
+  }
   case Match_MissingFeature:
     Error(IDLoc, "instruction requires a CPU feature not currently enabled");
     return true;

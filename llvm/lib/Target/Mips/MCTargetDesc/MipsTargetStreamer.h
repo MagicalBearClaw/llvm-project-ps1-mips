@@ -19,6 +19,7 @@
 namespace llvm {
 
 class formatted_raw_ostream;
+class MCInstrInfo;
 
 class MipsTargetStreamer : public MCTargetStreamer {
 public:
@@ -32,6 +33,11 @@ public:
   virtual void emitTPRel64Value(const MCExpr *);
 
   virtual void setPic(bool Value) {}
+
+  /// Pad MIPS I load delays in the instructions that follow, the way gas does
+  /// under `.set reorder`, if \p MII is not null. Only object output pads;
+  /// assembly output keeps `.set reorder` for the next assembler.
+  virtual void setLoadDelayPadding(const MCInstrInfo *MII) {}
 
   virtual void emitDirectiveSetMicroMips();
   virtual void emitDirectiveSetNoMicroMips();
@@ -337,6 +343,7 @@ public:
   MipsTargetELFStreamer(MCStreamer &S, const MCSubtargetInfo &STI);
 
   void setPic(bool Value) override { Pic = Value; }
+  void setLoadDelayPadding(const MCInstrInfo *MII) override;
 
   void emitLabel(MCSymbol *Symbol) override;
   void emitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;

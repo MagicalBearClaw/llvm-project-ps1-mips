@@ -25,12 +25,12 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 
 | # | Hazard | LLVM codegen | LLVM IAS | Fix |
 |---|---|---|---|---|
-| H1 | GPR load delay (lb/lbu/lh/lhu/lw) | correct | **wrong** | MIC-19 |
+| H1 | GPR load delay (lb/lbu/lh/lhu/lw) | correct | correct (MIC-19) | none |
 | H2 | Load delay across branches, calls, returns | correct (MIC-17) | n/a | none |
-| H3 | lwl/lwr pair | suboptimal | **wrong** | MIC-55, MIC-19 |
+| H3 | lwl/lwr pair | suboptimal | correct (MIC-19) | MIC-55 |
 | H4 | HI/LO (mflo/mfhi then mult/div/mthi/mtlo) | correct | **wrong** | MIC-20 |
 | H5 | GTE: mfc2/cfc2 delay, mtc2/ctc2/lwc2 write latency, missing opcodes | mfc2 delay correct (MIC-16); rest **wrong** | **wrong** | MIC-42, MIC-20, MIC-44 |
-| H6 | COP0 read delay (mfc0) | correct (MIC-16) | **wrong** | MIC-18, MIC-20 |
+| H6 | COP0 read delay (mfc0) | correct (MIC-16) | correct (MIC-19) | MIC-18 |
 | H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | **wrong** | MIC-18 |
 | H8 | `rfe` | n/a | **wrong** (missing) | MIC-18 |
 | H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
@@ -59,11 +59,31 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   a `nop` when the next instruction, looking through fall-through blocks,
   reads the loaded register. `HasLoadDelaySlot` covers LB, LBu, LH, LHu, LW,
   LWL and LWR. It does **not** cover LWC1, LWC2, MFC0, MFC2 or CFC2 (see H5, H6).
-* **LLVM IAS: wrong.** No load-delay `nop`s in reorder mode:
-  `lw $2,0($4); addiu $2,$2,1` is emitted as written.
+* **gas details** (binutils 2.47, measured for MIC-19):
+  * A store, a base register and a branch operand all count as reads.
+  * `lwl`/`lwr` never wait for a load to their own destination, which they
+    merge into: `lw $2; lwl $2,3($4)` gets no `nop`. Only their base
+    register counts.
+  * With a label in between, the `nop` goes before the label, and only if
+    the instruction after the label reads the register.
+  * Directives that emit nothing (`.globl`, `.type`, `.loc`, `.size`,
+    `.set at`, `.set push`/`pop`, `.set noreorder`) change nothing; the
+    first instruction after `.set noreorder` is still checked.
+  * Data, `.space`, alignment and a section switch, even to the same
+    section, get a `nop` first, since the next instruction is unknown. So
+    does the end of the file.
+* **LLVM IAS: correct (MIC-19).** `MipsELFStreamer` pads like gas, for
+  instructions the parser emits in reorder mode on MIPS I. That includes
+  inline asm, which is assembled in reorder mode, as GCC does. It holds a
+  label back while a load is pending, so the `nop` goes before it.
+  `load-delay-gas-parity.s` matches `as -march=r3000 -O1` byte for byte. Only
+  object output pads; assembly output keeps the text inside `.set reorder`,
+  for the next assembler to pad.
 * Tests: [load-delay-gpr.ll](../../llvm/test/CodeGen/Mips/ps1/load-delay-gpr.ll),
-  [load-delay-reorder.s](../../llvm/test/MC/Mips/ps1/load-delay-reorder.s)
-  (XFAIL, MIC-19).
+  [load-delay-reorder.s](../../llvm/test/MC/Mips/ps1/load-delay-reorder.s),
+  [load-delay-gas-parity.s](../../llvm/test/MC/Mips/ps1/load-delay-gas-parity.s),
+  [load-delay-label-redef.s](../../llvm/test/MC/Mips/ps1/load-delay-label-redef.s),
+  [inline-asm-load-delay.ll](../../llvm/test/CodeGen/Mips/ps1/inline-asm-load-delay.ll).
 
 ## H2. Load delay across control flow
 
@@ -117,10 +137,11 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   because `SafeInLoadDelaySlot` sees the tied source operand as a read.
   Correct, and equal to GCC, but one wasted cycle and four bytes per unaligned
   access. MIC-55 can beat GCC here.
-* **LLVM IAS: wrong.** No `nop` after the pair (H1).
+* **LLVM IAS: correct (MIC-19).** `lwl; lwr; nop; use`, as gas. Like gas,
+  `lwl`/`lwr` also follow any load to the same register without a `nop`;
+  codegen could do the same (MIC-55).
 * Tests: [load-delay-lwl-lwr.ll](../../llvm/test/CodeGen/Mips/ps1/load-delay-lwl-lwr.ll)
-  (XFAIL, MIC-55), [load-delay-reorder.s](../../llvm/test/MC/Mips/ps1/load-delay-reorder.s)
-  (XFAIL, MIC-19).
+  (XFAIL, MIC-55), [load-delay-reorder.s](../../llvm/test/MC/Mips/ps1/load-delay-reorder.s).
 
 ## H4. HI/LO hazard
 
@@ -170,6 +191,9 @@ ticket that fixes it. The fix removes the `XFAIL` line.
     know `cop2 imm25`.
   * Codegen: the `mfc2` read delay is handled since MIC-16, including after
     inline asm. `cfc2` joins it once MIC-42 adds the instruction.
+  * IAS: the `mfc2` read delay is handled since MIC-19, as gas. Like gas, a
+    read of a GTE register right after `lwc2` to it is not padded; MIC-44
+    checks that on hardware.
   * No write-latency handling anywhere.
   * Hardware-faithful output pads two `nop`s after `mtc2`/`ctc2`/`lwc2` before
     a dependent GTE command, which is one more than gas.
@@ -196,7 +220,8 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   which is what gas does across `#APP`. Between two asm blocks the operands
   decide, so independent GTE asm statements get no `nop`. LLVM 22.1.8 emitted
   inline-asm `mfc0 $1, $12` followed directly by `addiu $1, $1, 1`.
-* **LLVM IAS: wrong.** No `nop` after `mfc0` in reorder mode.
+* **LLVM IAS: correct (MIC-19).** One `nop` after `mfc0` in reorder mode when
+  the next instruction reads the register, as gas.
 * Side note: LLVM picks `$at` for the `=r` asm output and warns "used $at
   without .set noat". GCC picks `$2`. A macro in the asm text that expands
   through `$at` would corrupt the operand. MIC-132 fixes it.
