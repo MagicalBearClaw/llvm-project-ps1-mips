@@ -1,13 +1,16 @@
 # In `.set reorder` mode gas inserts a nop after a load whose result is read by
-# the next instruction, for -march=mips1. The integrated assembler should do the
-# same. An lwl/lwr pair to the same register needs no nop between them.
-# See docs/ps1/hazards.md, H1 and H3.
+# the next instruction, for -march=mips1. The integrated assembler does the
+# same. lwl/lwr never wait for a load to their own destination, which they
+# merge into. See docs/ps1/hazards.md, H1 and H3. load-delay-gas-parity.s
+# compares a larger corpus with gas byte for byte.
 #
-# Status: WRONG in LLVM 22.1.8: the integrated assembler inserts no load-delay
-# nops. MIC-19 fixes this.
-# XFAIL: *
+# Status: correct since MIC-19 (MipsELFStreamer). MIPS II and later have
+# load interlocks, so nothing is inserted there.
 # RUN: llvm-mc %s -triple=mipsel-unknown-none-elf -mcpu=mips1 -filetype=obj \
 # RUN:   | llvm-objdump -d --no-show-raw-insn - | FileCheck %s
+# RUN: llvm-mc %s -triple=mipsel-unknown-none-elf -mcpu=mips2 -filetype=obj \
+# RUN:   | llvm-objdump -d --no-show-raw-insn - \
+# RUN:   | FileCheck %s --check-prefix=MIPS2 --implicit-check-not=nop
 
         .set reorder
 # CHECK:      lw $2, 0x0($4)
@@ -37,3 +40,15 @@
         lwl     $5, 3($4)
         lwr     $5, 0($4)
         addu    $5, $5, $5
+# The load stays pending across the label, so the nop goes before it.
+# CHECK-NEXT: lw $6, 0x0($4)
+# CHECK-NEXT: nop
+# CHECK-EMPTY:
+# CHECK-NEXT: <target>:
+# CHECK-NEXT: addu $6, $6, $6
+        lw      $6, 0($4)
+target:
+        addu    $6, $6, $6
+
+# MIPS2:      lw $2, 0x0($4)
+# MIPS2-NEXT: addiu $2, $2, 0x1
