@@ -45,10 +45,15 @@ define i32 @asm_feeds_asm() {
   ret i32 0
 }
 
-; Independent asm statements, as in psyqo's GTE register writes: no nop.
+; Independent asm statements, as in psyqo's GTE register writes. Codegen adds
+; no nop between them. The asm text is assembled in reorder mode, where gas,
+; and since MIC-20 the integrated assembler, put one nop between a coprocessor
+; write and the next coprocessor instruction. GCC 16 with gas emits the same.
+; MIC-44 checks on hardware whether mtc2 to mtc2 needs it.
 define void @asm_independent(i32 %a, i32 %b) {
 ; CHECK-LABEL: <asm_independent>:
 ; CHECK:       mtc2 $4, $0
+; CHECK-NEXT:  nop
 ; CHECK-NEXT:  mtc2 $5, $1
   call void asm sideeffect "mtc2 $0, $$0", "r"(i32 %a)
   call void asm sideeffect "mtc2 $0, $$1", "r"(i32 %b)

@@ -1031,8 +1031,8 @@ MCELFStreamer &MipsTargetELFStreamer::getStreamer() {
   return static_cast<MCELFStreamer &>(Streamer);
 }
 
-void MipsTargetELFStreamer::setLoadDelayPadding(const MCInstrInfo *MII) {
-  static_cast<MipsELFStreamer &>(Streamer).setLoadDelayPadding(MII);
+void MipsTargetELFStreamer::setHazardPadding(bool Enable) {
+  static_cast<MipsELFStreamer &>(Streamer).setHazardPadding(Enable);
 }
 
 void MipsTargetELFStreamer::emitGPRel32Value(const MCExpr *Value) {

@@ -17,6 +17,7 @@
 #include "MipsOptionRecord.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include <array>
 #include <memory>
 #include <optional>
 
@@ -34,38 +35,53 @@ class MipsELFStreamer : public MCELFStreamer {
   MipsRegInfoRecord *RegInfoRecord;
   SmallVector<MCSymbol*, 4> Labels;
 
-  // MIPS I load delay padding for assembler input under `.set reorder`, the
-  // way gas does it (docs/ps1/hazards.md, H1). The register written by a load
-  // is not ready for the next instruction, so a nop goes in between when the
-  // next instruction reads it.
-  struct DelayedLoad {
-    // The GPR being loaded. No register for lwc2: gas checks no conflict for
-    // it, but still pads when the next thing emitted is not an instruction.
+  // MIPS I hazard padding for assembler input under `.set reorder`, the way
+  // gas does it (docs/ps1/hazards.md, H1, H4, H5, H6). Like gas, it keeps the
+  // last two instructions and what each still waits for:
+  //  * a load or coprocessor read: the next instruction must not read the
+  //    register;
+  //  * mflo/mfhi: the next two must not write LO/HI;
+  //  * mtc0/mtc2: the next must not be a coprocessor instruction.
+public:
+  struct HazardSource {
+    enum KindTy { None, Load, ReadHiLo, CopWrite } Kind = None;
+    // Load: the GPR loaded, or none for lwc2, which gas checks against no
+    // instruction. ReadHiLo: Mips::HI0 or Mips::LO0.
     MCRegister Reg;
-    const MCSubtargetInfo *STI;
   };
+
+private:
+  // The last two instructions emitted, most recent first.
+  std::array<HazardSource, 2> History;
   // Set while the assembler parser emits instructions in reorder mode.
-  const MCInstrInfo *LoadDelayMII = nullptr;
-  // Kept after recording stops, to check the instruction that follows.
-  const MCInstrInfo *PendingLoadMII = nullptr;
-  std::optional<DelayedLoad> PendingLoad;
-  // Labels seen while a load is pending. gas puts the nop before them, and
-  // whether it is needed depends on the instruction after them.
+  bool RecordHazards = false;
+  // Created when recording first starts, and kept to check the instructions
+  // that follow, which may come from codegen after an inline asm block. The
+  // parser's own MCInstrInfo may not live that long.
+  std::unique_ptr<MCInstrInfo> HazardMII;
+  const MCSubtargetInfo *HistorySTI = nullptr;
+  // Labels seen while a hazard is pending. gas puts the nops before them, and
+  // how many depends on the instruction after them.
   SmallVector<std::pair<MCSymbol *, SMLoc>, 2> DeferredLabels;
 
-  bool readsPendingLoad(const MCInst &Inst) const;
-  void emitLoadDelayNop();
+  /// The nops needed before \p Inst, or before anything that is not an
+  /// instruction if \p Inst is null.
+  unsigned nopsBefore(const MCInst *Inst) const;
+  unsigned requiredDistance(const HazardSource &Src, const MCInst *Inst) const;
+  void pushHistory(HazardSource Src);
+  void emitHazardNops(unsigned Count);
   void emitDeferredLabels();
 
 public:
-  /// Record loads from the instructions that follow, and pad after them, if
-  /// \p MII is not null. The parser sets it under `.set reorder` on MIPS I.
-  void setLoadDelayPadding(const MCInstrInfo *MII) { LoadDelayMII = MII; }
+  /// Record hazards from the instructions that follow, and pad after them.
+  /// The parser enables it under `.set reorder` on MIPS I.
+  void setHazardPadding(bool Enable);
 
-  /// The next thing emitted is not an instruction, so pad after a pending
-  /// load the way gas does when it cannot see the next instruction.
-  void flushPendingLoad();
+  /// The next thing emitted is not an instruction, so pad for the worst case,
+  /// as gas does when it cannot see the next instruction.
+  void flushPendingHazards();
 
+  ~MipsELFStreamer() override;
   MipsELFStreamer(MCContext &Context, std::unique_ptr<MCAsmBackend> MAB,
                   std::unique_ptr<MCObjectWriter> OW,
                   std::unique_ptr<MCCodeEmitter> Emitter);
@@ -91,7 +107,7 @@ public:
   void emitValueImpl(const MCExpr *Value, unsigned Size, SMLoc Loc) override;
   void emitIntValue(uint64_t Value, unsigned Size) override;
 
-  // Anything else that emits bytes ends a pending load delay first.
+  // Anything else that emits bytes pads for pending hazards first.
   void emitBytes(StringRef Data) override;
   void emitULEB128Value(const MCExpr *Value) override;
   void emitSLEB128Value(const MCExpr *Value) override;
