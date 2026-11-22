@@ -4,10 +4,10 @@
 ; must not use the result. gas tracks this across the asm boundary and pads
 ; with a nop when needed. See docs/ps1/hazards.md, H5 and H6.
 ;
-; Status: correct since MIC-16. The compiler cannot see inside an asm block,
-; so it treats asm outputs like loaded registers: the next instruction gets a
-; nop only if it reads one. Between two asm blocks the operands decide, so
-; consecutive GTE asm statements are not padded unless one feeds the other.
+; Status: correct. The read is the asm's hazard, so codegen adds nothing after
+; asm (MIC-21). The asm is assembled in reorder mode and the object streamer
+; pads it, as gas does (MIC-19, MIC-20): the next instruction gets a nop only
+; if it reads the result. See docs/ps1/hazards.md, H9.
 ; RUN: llc < %s -mtriple=mipsel-unknown-none-elf -mcpu=mips1 -mattr=+soft-float \
 ; RUN:   -relocation-model=static -frame-pointer=none -filetype=obj \
 ; RUN:   | llvm-objdump -d --no-show-raw-insn - | FileCheck %s

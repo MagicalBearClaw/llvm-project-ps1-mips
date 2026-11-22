@@ -33,7 +33,7 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 | H6 | COP0 read delay (mfc0) | correct (MIC-16) | correct (MIC-19) | MIC-18 |
 | H7 | COP0 write latency (SR, COP2 enable): pad 2 | n/a | pads 1, as gas (MIC-20) | MIC-18 |
 | H8 | `rfe` | n/a | **wrong** (missing) | MIC-18 |
-| H9 | Branch delay slots, `.set noreorder` | correct | correct | MIC-21 (guard) |
+| H9 | Branch delay slots, `.set noreorder`, inline asm boundary | correct (MIC-21) | correct (MIC-21) | none |
 | H10 | Interrupt during a load delay | correct | correct | none |
 | H11 | Unaligned access | correct | correct | none |
 | H12 | Divide by zero | correct (MIC-11) | n/a | MIC-22 |
@@ -237,11 +237,10 @@ ticket that fixes it. The fix removes the `XFAIL` line.
   `.set noreorder` code and pads with a `nop` only if the next instruction
   reads the register.
 * **LLVM codegen: correct since MIC-16.** `MFC0` and `MFC2` are in
-  `HasLoadDelaySlot`. Inline asm is opaque, so its outputs are treated like
-  loaded registers: the next instruction gets a `nop` only if it reads one,
-  which is what gas does across `#APP`. Between two asm blocks the operands
-  decide, so independent GTE asm statements get no `nop`. LLVM 22.1.8 emitted
-  inline-asm `mfc0 $1, $12` followed directly by `addiu $1, $1, 1`.
+  `HasLoadDelaySlot`. A read at the end of inline asm is the asm's hazard:
+  since MIC-21 codegen adds nothing after asm, and the assembler pads it, as
+  gas does across `#APP` (H9). LLVM 22.1.8 emitted inline-asm
+  `mfc0 $1, $12` followed directly by `addiu $1, $1, 1`.
 * **LLVM IAS: correct (MIC-19).** One `nop` after `mfc0` in reorder mode when
   the next instruction reads the register, as gas.
 * Side note: LLVM picks `$at` for the `=r` asm output and warns "used $at
@@ -291,17 +290,49 @@ ticket that fixes it. The fix removes the `XFAIL` line.
 * Tests: [cop0-hazards.s](../../llvm/test/MC/Mips/ps1/cop0-hazards.s) (XFAIL,
   MIC-18).
 
-## H9. Branch delay slots and `.set noreorder`
+## H9. Branch delay slots, `.set noreorder` and the inline asm boundary
 
 * **Hardware.** "The instruction following the branch will always be executed"
   ([psx-spx, Jump Opcodes][spx-cpu]). There are no likely-branches (MIPS II).
-* **gas.** In reorder mode it fills or pads the slot. In noreorder mode it
-  emits exactly what is written.
-* **LLVM: correct.** The IAS pads branch slots with `nop` in reorder mode and
-  leaves noreorder code untouched, hazards included. MIC-19 and MIC-20 add
-  hazard `nop`s in reorder mode only; MIC-21 keeps noreorder untouched.
+  Hand-tuned code sometimes reads a register's **old** value in a load delay
+  slot on purpose.
+* **gas** (binutils 2.47, measured for MIC-21). In reorder mode it fills or
+  pads the slot. A hazard between two `.set noreorder` instructions is never
+  padded. A hazard with a reorder instruction on one side is:
+  * a noreorder source and a reorder consumer: the `nop`s go before the
+    consumer (`.set noreorder; lw $2; .set reorder; addu $3,$2,$2` gets one);
+  * a reorder source and a noreorder consumer: the `nop`s go before the
+    first noreorder instruction, sized for every noreorder instruction the
+    hazard reaches, so none lands inside the noreorder code or between a
+    branch and its delay slot (`mflo; .set noreorder; bnez; mult` becomes
+    `mflo; nop; bnez; mult`);
+  * a noreorder source before data or the end of the file is not padded.
+* **The rule for LLVM (MIC-21).** The same, applied to both the assembler
+  and codegen:
+  * Code inside `.set noreorder`, whether written by hand, in inline asm, or
+    emitted by codegen, is never changed.
+  * At an inline asm boundary, the side that owns the hazard pads it. The
+    compiler's own load before asm is padded by codegen, since the asm text
+    may read the register. A hazard the asm leaves at its end is padded by
+    the assembler, since the asm is assembled in reorder mode; codegen adds
+    nothing after asm. A hazard left by noreorder asm is the programmer's.
+* **LLVM: correct (MIC-21).**
+  * `MipsELFStreamer` records MIPS I instructions from every source,
+    including codegen, and pads only where one side is reorder. It holds
+    noreorder instructions that a reorder hazard reaches, and puts the
+    `nop`s before them.
+  * Codegen-only output is unchanged: all 1396 `CodeGen/Mips` test inputs
+    that compile for `-mcpu=mips1` and for `mipsel-sony-psx` give the same
+    object files as before, except two asm blocks with no instructions,
+    which lost a needless `nop`.
+  * In assembly output, the asm text stays between `.set reorder` and
+    `.set pop`, and the assembler that reads it pads it.
 * Tests: [branch-delay-reorder.s](../../llvm/test/MC/Mips/ps1/branch-delay-reorder.s),
-  [noreorder-untouched.s](../../llvm/test/MC/Mips/ps1/noreorder-untouched.s).
+  [noreorder-untouched.s](../../llvm/test/MC/Mips/ps1/noreorder-untouched.s),
+  [noreorder-boundary-gas-parity.s](../../llvm/test/MC/Mips/ps1/noreorder-boundary-gas-parity.s),
+  [inline-asm-noreorder.ll](../../llvm/test/CodeGen/Mips/ps1/inline-asm-noreorder.ll),
+  and `hazard/noreorder-old-value` in the bench harness, which checks the
+  old-value read on PCSX-Redux.
 
 ## H10. Interrupt during a load delay
 
