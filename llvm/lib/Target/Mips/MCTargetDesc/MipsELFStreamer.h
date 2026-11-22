@@ -17,6 +17,7 @@
 #include "MipsOptionRecord.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include "llvm/MC/MCInst.h"
 #include <array>
 #include <memory>
 #include <optional>
@@ -36,12 +37,19 @@ class MipsELFStreamer : public MCELFStreamer {
   SmallVector<MCSymbol*, 4> Labels;
 
   // MIPS I hazard padding for assembler input under `.set reorder`, the way
-  // gas does it (docs/ps1/hazards.md, H1, H4, H5, H6). Like gas, it keeps the
-  // last two instructions and what each still waits for:
+  // gas does it (docs/ps1/hazards.md, H1, H4, H5, H6, H9). Like gas, it keeps
+  // the last two instructions and what each still waits for:
   //  * a load or coprocessor read: the next instruction must not read the
   //    register;
   //  * mflo/mfhi: the next two must not write LO/HI;
   //  * mtc0/mtc2: the next must not be a coprocessor instruction.
+  //
+  // Code in `.set noreorder`, and all codegen output, is never changed: a
+  // hazard between two noreorder instructions is the programmer's. A hazard
+  // with a reorder instruction on one side is padded. When the consumer is a
+  // noreorder instruction, the noreorder code is held back until the hazard
+  // runs out, and the nops go before all of it, so none lands inside it or
+  // between a branch and its delay slot.
 public:
   struct HazardSource {
     enum KindTy { None, Load, ReadHiLo, CopWrite } Kind = None;
@@ -51,26 +59,47 @@ public:
   };
 
 private:
+  struct HistoryEntry {
+    HazardSource Src;
+    // Emitted by the assembler parser in reorder mode.
+    bool Reorder = false;
+  };
   // The last two instructions emitted, most recent first.
-  std::array<HazardSource, 2> History;
+  std::array<HistoryEntry, 2> History;
   // Set while the assembler parser emits instructions in reorder mode.
   bool RecordHazards = false;
-  // Created when recording first starts, and kept to check the instructions
-  // that follow, which may come from codegen after an inline asm block. The
-  // parser's own MCInstrInfo may not live that long.
+  // Created on the first MIPS I instruction. The parser's own MCInstrInfo
+  // does not live long enough: codegen follows an inline asm block.
   std::unique_ptr<MCInstrInfo> HazardMII;
   const MCSubtargetInfo *HistorySTI = nullptr;
-  // Labels seen while a hazard is pending. gas puts the nops before them, and
-  // how many depends on the instruction after them.
-  SmallVector<std::pair<MCSymbol *, SMLoc>, 2> DeferredLabels;
 
-  /// The nops needed before \p Inst, or before anything that is not an
-  /// instruction if \p Inst is null.
-  unsigned nopsBefore(const MCInst *Inst) const;
+  // What was held back: labels seen while a hazard may still need nops
+  // before them, and noreorder instructions that a reorder hazard reaches.
+  struct HeldBack {
+    MCSymbol *Label = nullptr;
+    SMLoc Loc;
+    MCInst Inst;
+    const MCSubtargetInfo *STI = nullptr;
+  };
+  SmallVector<HeldBack, 4> Held;
+  unsigned HeldInstructions = 0;
+
+  /// The nops needed before \p Inst, \p Age instructions after the current
+  /// history, or before anything that is not an instruction if \p Inst is
+  /// null. Only entries with a reorder side count, unless \p Reorder.
+  unsigned nopsBefore(const MCInst *Inst, bool Reorder, unsigned Age = 0) const;
   unsigned requiredDistance(const HazardSource &Src, const MCInst *Inst) const;
-  void pushHistory(HazardSource Src);
+  /// Whether a reorder hazard can still need nops \p Age instructions after
+  /// the current history.
+  bool reorderHazardPending(unsigned Age) const;
+  void emitAndRecord(const MCInst &Inst, const MCSubtargetInfo &STI,
+                     bool Reorder);
   void emitHazardNops(unsigned Count);
-  void emitDeferredLabels();
+  /// Pad for the held-back noreorder instructions, then emit what was held.
+  /// \p UnknownNext pads as if anything may follow them.
+  void releaseHeld(bool UnknownNext);
+  /// Emit the held labels, when no instruction is held.
+  void emitHeldLabels();
 
 public:
   /// Record hazards from the instructions that follow, and pad after them.

@@ -812,12 +812,8 @@ bool MipsBranchExpansion::handleSlot(Pred Predicate, Safe SafeInSlot) {
         if (std::next(Iit) == FI->end() ||
             std::next(Iit)->getOpcode() != Mips::NOP) {
           Changed = true;
-          MachineInstr *Nop =
-              TII->insertNop(*(I->getParent()), std::next(I), I->getDebugLoc());
-          // The AsmPrinter emits an inline asm bundle head on its own and
-          // drops anything bundled to it, so keep the nop separate there.
-          if (!I->isInlineAsm())
-            Nop->bundleWithPred();
+          TII->insertNop(*(I->getParent()), std::next(I), I->getDebugLoc())
+              ->bundleWithPred();
           NumInsertedNops++;
         }
       }

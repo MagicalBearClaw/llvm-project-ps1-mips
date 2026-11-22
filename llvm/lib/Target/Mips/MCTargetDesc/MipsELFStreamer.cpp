@@ -19,6 +19,7 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
 
 using namespace llvm;
@@ -141,69 +142,34 @@ unsigned MipsELFStreamer::requiredDistance(const HazardSource &Src,
   llvm_unreachable("unknown hazard kind");
 }
 
-unsigned MipsELFStreamer::nopsBefore(const MCInst *Inst) const {
+unsigned MipsELFStreamer::nopsBefore(const MCInst *Inst, bool Reorder,
+                                     unsigned Age) const {
   unsigned Nops = 0;
-  for (unsigned Age = 0; Age != History.size(); ++Age) {
-    unsigned Distance = requiredDistance(History[Age], Inst);
-    if (Distance > Age)
-      Nops = std::max(Nops, Distance - Age);
+  for (unsigned I = 0; I != History.size(); ++I) {
+    const HistoryEntry &Entry = History[I];
+    // A hazard between two noreorder instructions is the programmer's.
+    if (!Reorder && !Entry.Reorder)
+      continue;
+    unsigned Distance = requiredDistance(Entry.Src, Inst);
+    unsigned Between = I + Age;
+    if (Distance > Between)
+      Nops = std::max(Nops, Distance - Between);
   }
   return Nops;
 }
 
-void MipsELFStreamer::pushHistory(HazardSource Src) {
-  History[1] = History[0];
-  History[0] = Src;
+bool MipsELFStreamer::reorderHazardPending(unsigned Age) const {
+  return nopsBefore(nullptr, /*Reorder=*/false, Age) != 0;
 }
 
-void MipsELFStreamer::emitHazardNops(unsigned Count) {
-  MCInst Nop;
-  Nop.setOpcode(Mips::SLL);
-  Nop.addOperand(MCOperand::createReg(Mips::ZERO));
-  Nop.addOperand(MCOperand::createReg(Mips::ZERO));
-  Nop.addOperand(MCOperand::createImm(0));
-  for (unsigned I = 0; I != Count; ++I) {
-    MCELFStreamer::emitInstruction(Nop, *HistorySTI);
-    pushHistory({});
-  }
-}
-
-void MipsELFStreamer::emitDeferredLabels() {
-  SmallVector<std::pair<MCSymbol *, SMLoc>, 2> ToEmit;
-  std::swap(ToEmit, DeferredLabels);
-  for (auto [Symbol, Loc] : ToEmit) {
-    MCELFStreamer::emitLabel(Symbol);
-    Labels.push_back(Symbol);
-  }
-}
-
-void MipsELFStreamer::setHazardPadding(bool Enable) {
-  RecordHazards = Enable;
-  if (Enable && !HazardMII)
-    HazardMII.reset(createMipsMCInstrInfo());
-}
-
-void MipsELFStreamer::flushPendingHazards() {
-  if (!HazardMII)
-    return;
-  emitHazardNops(nopsBefore(nullptr));
-  History = {};
-  emitDeferredLabels();
-}
-
-void MipsELFStreamer::emitInstruction(const MCInst &Inst,
-                                      const MCSubtargetInfo &STI) {
-  if (HazardMII) {
-    HistorySTI = &STI;
-    emitHazardNops(nopsBefore(&Inst));
-    emitDeferredLabels();
-  }
-
+void MipsELFStreamer::emitAndRecord(const MCInst &Inst,
+                                    const MCSubtargetInfo &STI, bool Reorder) {
   MCELFStreamer::emitInstruction(Inst, STI);
 
   if (HazardMII) {
     HistorySTI = &STI;
-    pushHistory(RecordHazards ? getHazardSource(Inst) : HazardSource());
+    History[1] = History[0];
+    History[0] = {getHazardSource(Inst), Reorder};
   }
 
   MCContext &Context = getContext();
@@ -220,6 +186,111 @@ void MipsELFStreamer::emitInstruction(const MCInst &Inst,
   }
 
   createPendingLabelRelocs();
+}
+
+void MipsELFStreamer::emitHazardNops(unsigned Count) {
+  MCInst Nop;
+  Nop.setOpcode(Mips::SLL);
+  Nop.addOperand(MCOperand::createReg(Mips::ZERO));
+  Nop.addOperand(MCOperand::createReg(Mips::ZERO));
+  Nop.addOperand(MCOperand::createImm(0));
+  for (unsigned I = 0; I != Count; ++I)
+    emitAndRecord(Nop, *HistorySTI, /*Reorder=*/false);
+}
+
+void MipsELFStreamer::releaseHeld(bool UnknownNext) {
+  unsigned Nops = 0;
+  unsigned Age = 0;
+  for (const HeldBack &H : Held) {
+    if (H.Label)
+      continue;
+    Nops = std::max(Nops, nopsBefore(&H.Inst, /*Reorder=*/false, Age));
+    ++Age;
+  }
+  if (UnknownNext)
+    Nops = std::max(Nops, nopsBefore(nullptr, /*Reorder=*/false, Age));
+  emitHazardNops(Nops);
+
+  // Emit everything up to the last instruction. Labels after it stay held:
+  // nops for what follows still go before them.
+  SmallVector<HeldBack, 4> ToEmit;
+  std::swap(ToEmit, Held);
+  HeldInstructions = 0;
+  size_t End = UnknownNext ? ToEmit.size() : 0;
+  for (size_t I = 0; I != ToEmit.size(); ++I)
+    if (!ToEmit[I].Label)
+      End = std::max(End, I + 1);
+  for (size_t I = 0; I != ToEmit.size(); ++I) {
+    HeldBack &H = ToEmit[I];
+    if (I >= End)
+      Held.push_back(std::move(H));
+    else if (H.Label) {
+      MCELFStreamer::emitLabel(H.Label);
+      Labels.push_back(H.Label);
+    } else {
+      emitAndRecord(H.Inst, *H.STI, /*Reorder=*/false);
+    }
+  }
+}
+
+void MipsELFStreamer::emitHeldLabels() {
+  assert(!HeldInstructions && "only labels may be held here");
+  SmallVector<HeldBack, 4> ToEmit;
+  std::swap(ToEmit, Held);
+  for (HeldBack &H : ToEmit) {
+    MCELFStreamer::emitLabel(H.Label);
+    Labels.push_back(H.Label);
+  }
+}
+
+void MipsELFStreamer::setHazardPadding(bool Enable) {
+  RecordHazards = Enable;
+  if (Enable && !HazardMII)
+    HazardMII.reset(createMipsMCInstrInfo());
+}
+
+void MipsELFStreamer::flushPendingHazards() {
+  if (!HazardMII)
+    return;
+  releaseHeld(/*UnknownNext=*/true);
+  History = {};
+}
+
+void MipsELFStreamer::emitInstruction(const MCInst &Inst,
+                                      const MCSubtargetInfo &STI) {
+  // Hazards are tracked on MIPS I only. Codegen output is recorded too, so a
+  // hazard it leaves for inline asm that follows is padded, as gas does.
+  if (!HazardMII && STI.hasFeature(Mips::FeatureMips1) &&
+      !STI.hasFeature(Mips::FeatureMips2))
+    HazardMII.reset(createMipsMCInstrInfo());
+  if (!HazardMII) {
+    emitAndRecord(Inst, STI, /*Reorder=*/false);
+    return;
+  }
+  HistorySTI = &STI;
+
+  if (!RecordHazards) {
+    // A noreorder instruction. If a reorder hazard can reach it, hold it
+    // until the hazard runs out, so the nops go before all of them.
+    if (HeldInstructions || reorderHazardPending(0)) {
+      Held.push_back({nullptr, SMLoc(), Inst, &STI});
+      ++HeldInstructions;
+      if (!reorderHazardPending(HeldInstructions))
+        releaseHeld(/*UnknownNext=*/false);
+      return;
+    }
+    emitHeldLabels();
+    emitAndRecord(Inst, STI, /*Reorder=*/false);
+    return;
+  }
+
+  // A reorder instruction: noreorder instructions held before it go first,
+  // then the nops it needs, before any labels in front of it.
+  if (HeldInstructions)
+    releaseHeld(/*UnknownNext=*/false);
+  emitHazardNops(nopsBefore(&Inst, /*Reorder=*/true));
+  emitHeldLabels();
+  emitAndRecord(Inst, STI, /*Reorder=*/true);
 }
 
 void MipsELFStreamer::emitCFIStartProcImpl(MCDwarfFrameInfo &Frame) {
@@ -255,15 +326,16 @@ void MipsELFStreamer::createPendingLabelRelocs() {
 }
 
 void MipsELFStreamer::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
-  if (HazardMII && nopsBefore(nullptr)) {
+  if (HazardMII &&
+      (HeldInstructions || nopsBefore(nullptr, /*Reorder=*/true) != 0)) {
     // A held-back label is not defined yet, so a second definition of it is
     // caught here.
-    if (llvm::any_of(DeferredLabels,
-                     [&](const auto &L) { return L.first == Symbol; })) {
+    if (llvm::any_of(Held,
+                     [&](const HeldBack &H) { return H.Label == Symbol; })) {
       getContext().reportError(Loc, "invalid symbol redefinition");
       return;
     }
-    DeferredLabels.emplace_back(Symbol, Loc);
+    Held.push_back({Symbol, Loc, MCInst(), nullptr});
     return;
   }
   MCELFStreamer::emitLabel(Symbol);

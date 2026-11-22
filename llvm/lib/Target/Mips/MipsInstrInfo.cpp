@@ -632,14 +632,13 @@ bool MipsInstrInfo::SafeInFPUDelaySlot(const MachineInstr &MIInSlot,
 /// slot. Consider inline assembly as unsafe as well.
 bool MipsInstrInfo::SafeInLoadDelaySlot(const MachineInstr &MIInSlot,
                                         const MachineInstr &LoadMI) const {
-  // An asm block in the slot may read the loaded register by name. Between two
-  // asm blocks, the operands say whether the second reads the first's
-  // outputs, so consecutive GTE asm statements do not get a nop each.
-  if (MIInSlot.isInlineAsm() && !LoadMI.isInlineAsm())
+  // The compiler's own load before inline asm: the asm text may read the
+  // register by name, so this hazard is on the compiler's side and the
+  // compiler pads it.
+  if (MIInSlot.isInlineAsm())
     return false;
 
-  // all_defs, not defs: inline asm outputs are not explicit defs.
-  return !llvm::any_of(LoadMI.all_defs(), [&](const MachineOperand &Op) {
+  return !llvm::any_of(LoadMI.defs(), [&](const MachineOperand &Op) {
     return Op.isReg() && MIInSlot.readsRegister(Op.getReg(), /*TRI=*/nullptr) &&
            !MIInSlot.hasRegisterImplicitUseOperand(Op.getReg());
   });
@@ -691,13 +690,8 @@ bool MipsInstrInfo::HasLoadDelaySlot(const MachineInstr &MI) const {
   case Mips::MFC0:
   case Mips::MFC2:
     return true;
-  // Inline asm may end with any of the above, and the compiler cannot see
-  // inside it: treat its outputs as delayed. gas does the same across #APP.
-  // The delay slot filler never moves inline asm, so this only adds a nop
-  // when the next instruction reads an asm output.
-  case TargetOpcode::INLINEASM:
-  case TargetOpcode::INLINEASM_BR:
-    return true;
+  // Not inline asm: a hazard it leaves is on the asm's side, and the
+  // assembler pads it, as gas does across #APP (docs/ps1/hazards.md, H9).
   default:
     return false;
   }
